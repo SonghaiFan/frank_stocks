@@ -140,6 +140,19 @@ async function writeJson(file: string, value: unknown) {
   await writeFile(file, JSON.stringify(value, null, 2))
 }
 
+async function tryWriteJson(file: string, value: unknown) {
+  try {
+    await writeJson(file, value)
+    return true
+  } catch (error) {
+    console.warn(
+      `Unable to write ${path.basename(file)}:`,
+      error instanceof Error ? error.message : String(error),
+    )
+    return false
+  }
+}
+
 export async function loadWatchlist(): Promise<Watchlist> {
   if (existsSync(watchlistFile)) {
     try {
@@ -152,7 +165,6 @@ export async function loadWatchlist(): Promise<Watchlist> {
     }
   }
 
-  await saveWatchlist(defaultWatchlist)
   return structuredClone(defaultWatchlist)
 }
 
@@ -174,7 +186,7 @@ export async function addSymbol(symbol: string, sector: string) {
   const exists = Object.values(watchlist).some((symbols) => symbols.includes(normalized))
   if (!exists) {
     watchlist[targetSector].push(normalized)
-    await saveWatchlist(watchlist)
+    await tryWriteJson(watchlistFile, watchlist)
   }
 
   return responseJson(watchlist)
@@ -192,7 +204,7 @@ export async function removeSymbol(symbol: string) {
     }
   }
 
-  await saveWatchlist(watchlist)
+  await tryWriteJson(watchlistFile, watchlist)
   return watchlist
 }
 
@@ -421,7 +433,7 @@ export async function getPricesFromQuery(url: string) {
   })
 
   if (cacheable && diskCacheDirty && diskCache) {
-    await writeJson(cacheFile, diskCache)
+    await tryWriteJson(cacheFile, diskCache)
   }
 
   return result

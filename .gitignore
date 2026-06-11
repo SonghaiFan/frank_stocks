@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 node_modules/
 .output/
+.vercel/
 .vinxi/
 dist/
 price_cache.json

@@ -18,6 +18,7 @@ export default defineConfig({
     }),
     viteReact(),
     nitro({
+      preset: 'vercel',
       rollupConfig: {
         external: ['yahoo-finance2'],
       },
