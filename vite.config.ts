@@ -12,16 +12,16 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   plugins: [
-    tailwindcss(),
     tanstackStart({
       srcDirectory: 'src',
     }),
-    viteReact(),
     nitro({
       preset: 'vercel',
       rollupConfig: {
         external: ['yahoo-finance2'],
       },
     }),
+    viteReact(),
+    tailwindcss(),
   ],
 })
