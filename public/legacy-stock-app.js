@@ -8,6 +8,246 @@ let horizonSize  = 26;
 let currentScaleMode = "fib-ratios";
 let currentDomainMode = "global";
 let priceLoadSeq = 0;
+let currentLayoutMode = localStorage.getItem("stocks.layoutMode") || "sector";
+let currentRankMode = localStorage.getItem("stocks.rankMode") || "return-desc";
+
+const SECTOR_ORDER = [
+  "AI Models", "AI Apps",
+  "Chips Compute", "Chips Memory", "Chips Equipment",
+  "DC Infra", "Cloud",
+  "Nuclear", "Grid & Renewables", "Oil & Gas",
+  "Autonomy", "Defense",
+  "BioHealth", "Fintech", "Consumer"
+];
+
+const SECTOR_LABELS = {
+  "AI Models":        "AI Models",
+  "AI Apps":          "AI Apps",
+  "Chips Compute":    "Chips · Compute",
+  "Chips Memory":     "Chips · Memory",
+  "Chips Equipment":  "Chips · Equipment",
+  "DC Infra":         "DC Infrastructure",
+  "Cloud":            "Cloud & CDN",
+  "Nuclear":          "Nuclear Power",
+  "Grid & Renewables":"Grid & Renewables",
+  "Oil & Gas":        "Oil & Gas",
+  "Autonomy":         "Autonomy & Robotics",
+  "Defense":          "Defense & Space",
+  "BioHealth":        "Biotech & Health AI",
+  "Fintech":          "Fintech & Payments",
+  "Consumer":         "Consumer & Media"
+};
+
+const QUADRANTS = [
+  { id: "q1", label: "Q1 Core", subtitle: "Quality compounders", icon: "shield-check" },
+  { id: "q2", label: "Q2 Attack", subtitle: "Cyclical upside", icon: "trending-up" },
+  { id: "q3", label: "Q3 Defense", subtitle: "Cashflow ballast", icon: "anchor" },
+  { id: "q4", label: "Q4 Options", subtitle: "Asymmetric bets", icon: "rocket" },
+];
+
+const DEFAULT_QUADRANT_MAP = {
+  "AI Models": "q1",
+  "Chips Equipment": "q1",
+  "DC Infra": "q1",
+  "Cloud": "q1",
+  "AI Apps": "q2",
+  "Chips Compute": "q2",
+  "Chips Memory": "q2",
+  "Grid & Renewables": "q2",
+  "Defense": "q2",
+  "Oil & Gas": "q3",
+  "BioHealth": "q3",
+  "Fintech": "q3",
+  "Nuclear": "q4",
+  "Autonomy": "q4",
+  "Consumer": "q2",
+};
+
+function loadQuadrantMap() {
+  try {
+    return { ...DEFAULT_QUADRANT_MAP, ...JSON.parse(localStorage.getItem("stocks.quadrantMap") || "{}") };
+  } catch {
+    return { ...DEFAULT_QUADRANT_MAP };
+  }
+}
+
+let quadrantMap = loadQuadrantMap();
+let quadrantPointerDrag = null;
+
+function pctReturn(entry) {
+  const p = entry?.prices || [];
+  if (p.length < 2 || !p[0].close) return 0;
+  return (p[p.length - 1].close - p[0].close) / p[0].close;
+}
+
+function sortEntries(entries) {
+  const next = [...entries];
+  if (currentRankMode === "return-asc") {
+    next.sort((a, b) => pctReturn(a) - pctReturn(b));
+  } else if (currentRankMode === "symbol-asc") {
+    next.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  } else {
+    next.sort((a, b) => pctReturn(b) - pctReturn(a));
+  }
+  return next;
+}
+
+function getWatchlistEntriesBySector() {
+  const bySector = new Map();
+  SECTOR_ORDER.forEach(sec => {
+    const entries = (watchlist[sec] || [])
+      .map(sym => {
+        const entry = priceData.find(d => d.symbol === sym && d.prices && d.prices.length > 1);
+        return entry ? { ...entry, sector: sec } : null;
+      })
+      .filter(Boolean);
+    if (entries.length > 0) bySector.set(sec, entries);
+  });
+  return bySector;
+}
+
+function buildGroupedData() {
+  const bySector = getWatchlistEntriesBySector();
+
+  if (currentLayoutMode === "ranking") {
+    const allEntries = sortEntries(Array.from(bySector.values()).flat());
+    if (allEntries.length === 0) return [];
+    const midpoint = Math.ceil(allEntries.length / 2);
+    return [
+      {
+        key: "ranking-a",
+        sector: "Ranking",
+        label: `Rank 1-${midpoint}`,
+        icon: "list-ordered",
+        items: allEntries.slice(0, midpoint),
+      },
+      {
+        key: "ranking-b",
+        sector: "Ranking",
+        label: `Rank ${midpoint + 1}-${allEntries.length}`,
+        icon: "list-ordered",
+        items: allEntries.slice(midpoint),
+      },
+    ].filter(g => g.items.length > 0);
+  }
+
+  if (currentLayoutMode === "quadrant") {
+    return QUADRANTS.map(q => {
+      const items = SECTOR_ORDER
+        .filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id)
+        .flatMap(sec => bySector.get(sec) || []);
+      return {
+        key: q.id,
+        sector: q.id,
+        label: q.label,
+        subtitle: q.subtitle,
+        icon: q.icon,
+        items: sortEntries(items),
+      };
+    }).filter(g => g.items.length > 0);
+  }
+
+  return SECTOR_ORDER.map(sec => {
+    const entries = bySector.get(sec) || [];
+    return {
+      key: sec,
+      sector: sec,
+      label: SECTOR_LABELS[sec] || sec,
+      items: sortEntries(entries),
+    };
+  }).filter(g => g.items.length > 0);
+}
+
+function renderQuadrantBoard() {
+  const board = document.getElementById("quadrant-board");
+  if (!board) return;
+
+  board.innerHTML = QUADRANTS.map(q => {
+    const sectors = SECTOR_ORDER.filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id);
+    const chips = sectors.map(sec => `
+      <button type="button" class="sector-chip" draggable="true" data-sector="${sec}" title="${SECTOR_LABELS[sec] || sec}">
+        ${sec.replace("Chips ", "").replace("Grid & Renewables", "Grid")}
+      </button>
+    `).join("");
+    return `
+      <div class="quadrant-zone" data-quadrant="${q.id}">
+        <div class="quadrant-title">
+          <span>${q.label}</span>
+          <span class="quadrant-subtitle">${sectors.length}</span>
+        </div>
+        <div class="quadrant-subtitle">${q.subtitle}</div>
+        <div class="sector-chip-list">${chips}</div>
+      </div>
+    `;
+  }).join("");
+
+  board.querySelectorAll(".sector-chip").forEach(chip => {
+    chip.addEventListener("dragstart", event => {
+      event.dataTransfer.setData("text/plain", chip.dataset.sector);
+      event.dataTransfer.effectAllowed = "move";
+    });
+    chip.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      quadrantPointerDrag = {
+        sector: chip.dataset.sector,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+      chip.setPointerCapture?.(event.pointerId);
+    });
+    chip.addEventListener("pointermove", event => {
+      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
+      const dx = event.clientX - quadrantPointerDrag.startX;
+      const dy = event.clientY - quadrantPointerDrag.startY;
+      if (Math.hypot(dx, dy) > 5) {
+        quadrantPointerDrag.moved = true;
+        chip.classList.add("dragging");
+      }
+    });
+    chip.addEventListener("pointerup", event => {
+      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
+      const drag = quadrantPointerDrag;
+      quadrantPointerDrag = null;
+      chip.classList.remove("dragging");
+      chip.releasePointerCapture?.(event.pointerId);
+      if (!drag.moved) return;
+      const targetZone = document.elementFromPoint(event.clientX, event.clientY)?.closest(".quadrant-zone");
+      const quadrant = targetZone?.dataset.quadrant;
+      if (!drag.sector || !quadrant) return;
+      quadrantMap = { ...quadrantMap, [drag.sector]: quadrant };
+      localStorage.setItem("stocks.quadrantMap", JSON.stringify(quadrantMap));
+      renderQuadrantBoard();
+      renderChart();
+    });
+    chip.addEventListener("pointercancel", event => {
+      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
+      quadrantPointerDrag = null;
+      chip.classList.remove("dragging");
+    });
+  });
+
+  board.querySelectorAll(".quadrant-zone").forEach(zone => {
+    zone.addEventListener("dragover", event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      zone.classList.add("drag-over");
+    });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+    zone.addEventListener("drop", event => {
+      event.preventDefault();
+      zone.classList.remove("drag-over");
+      const sector = event.dataTransfer.getData("text/plain");
+      const quadrant = zone.dataset.quadrant;
+      if (!sector || !quadrant) return;
+      quadrantMap = { ...quadrantMap, [sector]: quadrant };
+      localStorage.setItem("stocks.quadrantMap", JSON.stringify(quadrantMap));
+      renderQuadrantBoard();
+      renderChart();
+    });
+  });
+}
 
 // ── Diverging two-color schema (no hue encoding per stock) ──
 const posColor = "#18c96a";
@@ -134,6 +374,27 @@ bindAddForm("add-form-mobile", "add-input-mobile", "add-sector-mobile", "error-m
   const el = document.getElementById(id);
   if (el) el.addEventListener("change", () => loadPrices());
 });
+
+// ── Layout / ranking controls ──
+const layoutModeSelect = document.getElementById("layout-mode-select");
+if (layoutModeSelect) {
+  layoutModeSelect.value = currentLayoutMode;
+  layoutModeSelect.addEventListener("change", function() {
+    currentLayoutMode = this.value;
+    localStorage.setItem("stocks.layoutMode", currentLayoutMode);
+    renderChart();
+  });
+}
+
+const rankModeSelect = document.getElementById("rank-mode-select");
+if (rankModeSelect) {
+  rankModeSelect.value = currentRankMode;
+  rankModeSelect.addEventListener("change", function() {
+    currentRankMode = this.value;
+    localStorage.setItem("stocks.rankMode", currentRankMode);
+    renderChart();
+  });
+}
 
 // ── Scale selector ──
 ["scale-mode-select","scale-mode-select-d"].forEach(id => {
@@ -456,51 +717,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     document.getElementById(containerId).appendChild(svgEl);
   }
 
-  const sectorOrder = [
-    "AI Models", "AI Apps",
-    "Chips Compute", "Chips Memory", "Chips Equipment",
-    "DC Infra", "Cloud",
-    "Nuclear", "Grid & Renewables", "Oil & Gas",
-    "Autonomy", "Defense",
-    "BioHealth", "Fintech", "Consumer"
-  ];
-  const sectorLabels = {
-    "AI Models":        "AI Models",
-    "AI Apps":          "AI Apps",
-    "Chips Compute":    "Chips · Compute",
-    "Chips Memory":     "Chips · Memory",
-    "Chips Equipment":  "Chips · Equipment",
-    "DC Infra":         "DC Infrastructure",
-    "Cloud":            "Cloud & CDN",
-    "Nuclear":          "Nuclear Power",
-    "Grid & Renewables":"Grid & Renewables",
-    "Oil & Gas":        "Oil & Gas",
-    "Autonomy":         "Autonomy & Robotics",
-    "Defense":          "Defense & Space",
-    "BioHealth":        "Biotech & Health AI",
-    "Fintech":          "Fintech & Payments",
-    "Consumer":         "Consumer & Media"
-  };
-
-  const pctReturn = entry => {
-    const p = entry.prices;
-    return (p[p.length - 1].close - p[0].close) / p[0].close;
-  };
-
-  const allGroupedData = [];
-  sectorOrder.forEach(sec => {
-    const symbols = watchlist[sec] || [];
-    const secPrices = [];
-    symbols.forEach(sym => {
-      const entry = priceData.find(d => d.symbol === sym && d.prices && d.prices.length > 1);
-      if (entry) secPrices.push(entry);
-    });
-    if (secPrices.length > 0) {
-      // Sort within sector: top performers first
-      secPrices.sort((a, b) => pctReturn(b) - pctReturn(a));
-      allGroupedData.push({ sector: sec, label: sectorLabels[sec], items: secPrices });
-    }
-  });
+  const allGroupedData = buildGroupedData();
 
   if (allGroupedData.length === 0) return;
 
@@ -532,7 +749,8 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         type: "row",
         symbol: entry.symbol,
         prices: entry.prices,
-        sector: secGroup.sector, // sector tracking
+        sector: entry.sector || secGroup.sector,
+        groupKey: secGroup.key || secGroup.sector,
         y: currentY,
         height: size
       });
@@ -540,8 +758,10 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     });
     const endY = currentY;
     sectorGroupsLayout.push({
+      key: secGroup.key || secGroup.sector,
       sector: secGroup.sector,
       label: secGroup.label,
+      icon: secGroup.icon,
       startY: startY,
       endY: endY
     });
@@ -821,7 +1041,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .selectAll("g")
     .data(sectorGroupsLayout)
     .join("g")
-      .attr("class", d => `bracket-group sector-${d.sector}`);
+      .attr("class", d => `bracket-group group-${String(d.key).replace(/\W+/g, "-")}`);
 
   // Draw vertical line for the bracket
   groupG.append("line")
@@ -876,7 +1096,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .attr("height", 16)
     .html(d => `
       <div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;">
-        <i data-lucide="${iconMap[d.sector]}" style="width: 13px; height: 13px; stroke-width: 2.2px; color: var(--muted-foreground);" title="${d.label}"></i>
+        <i data-lucide="${d.icon || iconMap[d.sector] || "layout-grid"}" style="width: 13px; height: 13px; stroke-width: 2.2px; color: var(--muted-foreground);" title="${d.label}"></i>
       </div>
     `);
 
@@ -901,11 +1121,11 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .style("cursor", "pointer")
     .on("click", function(event, d) {
       event.stopPropagation();
-      const key = `sector:${d.sector}`;
+      const key = `group:${d.key}`;
       if (_selectedKey === key) { clearHighlight(); return; }
       _selectedKey = key;
-      s.selectAll(".row-group").style("opacity", r => r.sector === d.sector ? "1" : "0.45");
-      s.selectAll(".bracket-group").style("opacity", b => b.sector === d.sector ? "1" : "0.45");
+      s.selectAll(".row-group").style("opacity", r => r.groupKey === d.key ? "1" : "0.45");
+      s.selectAll(".bracket-group").style("opacity", b => b.key === d.key ? "1" : "0.45");
     });
 
   // Click on SVG background clears selection
@@ -928,7 +1148,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       if (_selectedKey === key) { clearHighlight(); return; }
       _selectedKey = key;
       s.selectAll(".row-group").style("opacity", r => r.symbol === d.symbol ? "1" : "0.45");
-      s.selectAll(".bracket-group").style("opacity", b => b.sector === d.sector ? "1" : "0.45");
+      s.selectAll(".bracket-group").style("opacity", b => b.key === d.groupKey ? "1" : "0.45");
     });
 
   rowG.each(function(rowData, rowIdx) {
@@ -1041,28 +1261,9 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         tooltip.style.left = (event.clientX + 14) + "px";
         tooltip.style.top  = (event.clientY - 60) + "px"; // adjusted tooltip top offset to fit taller content
         
-        // Sector labels mapping
-        const sectorNames = {
-          "AI Models":        "AI Models",
-          "AI Apps":          "AI Apps",
-          "Chips Compute":    "Chips · Compute",
-          "Chips Memory":     "Chips · Memory",
-          "Chips Equipment":  "Chips · Equipment",
-          "DC Infra":         "DC Infra",
-          "Cloud":            "Cloud & CDN",
-          "Nuclear":          "Nuclear",
-          "Grid & Renewables":"Grid & Renewables",
-          "Oil & Gas":        "Oil & Gas",
-          "Autonomy":         "Autonomy",
-          "Defense":          "Defense",
-          "BioHealth":        "BioHealth",
-          "Fintech":          "Fintech",
-          "Consumer":         "Consumer"
-        };
-        
         tooltip.querySelector(".tt-sym").textContent  = rowData.symbol;
         tooltip.querySelector(".tt-sym").style.color  = color;
-        tooltip.querySelector(".tt-sector").textContent = sectorNames[rowData.sector] || rowData.sector;
+        tooltip.querySelector(".tt-sector").textContent = SECTOR_LABELS[rowData.sector] || rowData.sector;
         tooltip.querySelector(".tt-date").textContent = best.date.toISOString().slice(0,10);
         
         // Populate start, end prices
@@ -1228,6 +1429,7 @@ window.addEventListener("resize", () => {
 // ── Init ──
 (async () => {
   applyDesktopLayout();
+  renderQuadrantBoard();
   await loadWatchlist();
   await loadPrices();
   lucide.createIcons();

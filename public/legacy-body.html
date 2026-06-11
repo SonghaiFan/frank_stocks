@@ -115,6 +115,28 @@
       </div>
     </div>
 
+    <!-- Layout / Quadrants -->
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted-foreground);margin-bottom:8px;">LAYOUT</div>
+      <div class="drawer-group" style="margin-bottom:7px;">
+        <span class="drawer-label">Group</span>
+        <select id="layout-mode-select" class="premium-select" style="flex:1;">
+          <option value="sector" selected>Sector</option>
+          <option value="quadrant">Quadrants</option>
+          <option value="ranking">Ranking</option>
+        </select>
+      </div>
+      <div class="drawer-group">
+        <span class="drawer-label">Rank</span>
+        <select id="rank-mode-select" class="premium-select" style="flex:1;">
+          <option value="return-desc" selected>Best first</option>
+          <option value="return-asc">Worst first</option>
+          <option value="symbol-asc">Ticker A-Z</option>
+        </select>
+      </div>
+      <div id="quadrant-board" class="quadrant-board"></div>
+    </div>
+
     <!-- Chart settings inline (no drawer needed on desktop) -->
     <div style="padding:14px 16px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1;">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted-foreground);margin-bottom:2px;">CHART SETTINGS</div>
