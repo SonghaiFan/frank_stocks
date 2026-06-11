@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>股市叙事 · Stock Narrative</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Lora:ital,wght@0,400;0,600;1,400&display=block');
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border-radius: 0px !important;
+  }
+
+  :root {
+    --bg: #F9F9F7;
+    --surface: #F9F9F7;
+    --border: #111111;
+    --text: #111111;
+    --muted: #737373;
+    --green: #10b981;
+    --red: #f43f5e;
+    --accent: #111111;
+  }
+
+  body {
+    background-color: var(--bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23111111' fill-opacity='0.04' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+    color: var(--text);
+    font-family: 'Inter', 'Helvetica Neue', sans-serif;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 170px;
+    min-width: 170px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+
+  .sidebar-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    padding: 6px 10px 3px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #sidebar h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    padding: 4px 10px 6px;
+    border-bottom: 2px double var(--border);
+  }
+  #sidebar h1 span { color: var(--red); }
+
+  #add-form {
+    display: flex;
+    gap: 4px;
+    padding: 6px 10px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  #add-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--border);
+    color: var(--text);
+    padding: 6px 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    outline: none;
+    transition: background-color .15s;
+  }
+  #add-input:focus {
+    background-color: rgba(0,0,0,0.03);
+  }
+  #add-btn {
+    background: var(--border);
+    border: 1px solid transparent;
+    color: var(--surface);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  #add-btn:hover {
+    background: var(--surface);
+    color: var(--border);
+    border-color: var(--border);
+  }
+
+  #watchlist { list-style: none; overflow-y: auto; flex: 1; }
+  #watchlist li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: all .12s;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  #watchlist li:hover {
+    background: var(--border);
+    color: var(--surface);
+  }
+  #watchlist li:hover .sym-name {
+    color: var(--surface) !important;
+  }
+  #watchlist li.active {
+    background: var(--border);
+    color: var(--surface);
+  }
+  #watchlist li.active .sym-name {
+    color: var(--surface) !important;
+  }
+  .sym-name { flex: 1; }
+  .sym-change { font-size: 11px; margin-right: 6px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .pos { color: var(--green); }
+  #watchlist li:hover .pos { color: #8ef5b4; }
+  #watchlist li.active .pos { color: #8ef5b4; }
+  .neg { color: var(--red); }
+  #watchlist li:hover .neg { color: #ff8080; }
+  #watchlist li.active .neg { color: #ff8080; }
+  .del-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    opacity: 0;
+    transition: opacity .12s;
+  }
+  #watchlist li:hover .del-btn { opacity: 1; color: var(--surface); }
+  .del-btn:hover { color: var(--red) !important; }
+
+  #error-msg {
+    color: var(--red);
+    font-size: 10px;
+    padding: 0 10px 4px;
+    display: none;
+  }
+
+  /* ── Main ── */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #header {
+    padding: 6px 14px 4px;
+    border-bottom: 2px double var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #header h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 16px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: -0.5px;
+  }
+  #header .subtitle {
+    font-family: 'Lora', serif;
+    font-size: 13px;
+    font-style: italic;
+    color: var(--muted);
+  }
+
+  #controls {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    align-items: center;
+  }
+  .period-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all .15s;
+  }
+  .period-btn.active, .period-btn:hover {
+    background: var(--border);
+    border-color: var(--border);
+    color: var(--surface);
+  }
+
+  .gap-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text);
+    border-left: 1px solid var(--border);
+    padding-left: 6px;
+    margin-left: 2px;
+  }
+  .scale-select {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 4px;
+    outline: none;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .scale-select:hover {
+    background-color: rgba(0,0,0,0.03);
+  }
+
+  /* Custom Range Input */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+    width: 80px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    background: var(--border);
+    height: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--border);
+    height: 12px;
+    width: 12px;
+    border: 1px solid var(--border);
+    margin-top: -5px;
+    transition: transform 0.1s;
+  }
+  input[type="range"]:hover::-webkit-slider-thumb {
+    transform: scale(1.15);
+  }
+  #bands-label, #size-label {
+    min-width: 20px;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+
+  #chart-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 14px 4px;
+    position: relative;
+    background-image:
+      linear-gradient(0deg, transparent 98%, rgba(17,17,17,0.015) 100%),
+      linear-gradient(90deg, transparent 98%, rgba(17,17,17,0.015) 100%);
+    background-size: 4px 4px;
+  }
+
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+  }
+
+  /* Ridgeline/Horizon chart */
+  .ridge-row { margin-bottom: 2px; }
+  .ridge-row .row-label {
+    fill: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'Playfair Display', serif;
+    text-transform: uppercase;
+  }
+  .ridge-row .area { fill-opacity: .75; }
+  .ridge-row .baseline { stroke: var(--border); stroke-width: .5; }
+  .axis text { fill: var(--text); font-size: 9px; font-family: 'JetBrains Mono', monospace; }
+  .axis path, .axis line { stroke: var(--border); }
+  .x-axis-shared text { fill: var(--text); font-size: 9px; font-family: 'JetBrains Mono', monospace; }
+  .x-axis-shared path, .x-axis-shared line { stroke: var(--border); }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed;
+    background: var(--bg);
+    border: 2px solid var(--border);
+    padding: 10px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .1s;
+    z-index: 100;
+    min-width: 130px;
+    box-shadow: 4px 4px 0px 0px var(--border);
+  }
+  #tooltip .tt-sym {
+    font-family: 'Playfair Display', serif;
+    font-weight: 900;
+    font-size: 16px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  #tooltip .tt-date {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    font-size: 10px;
+    margin-bottom: 4px;
+  }
+  #tooltip .tt-price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  /* Info Card */
+  .info-card {
+    background: transparent;
+    border: 1px solid var(--border);
+    margin: 4px 14px 2px;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 6px 10px;
+    font-family: 'Lora', serif;
+  }
+  .info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+  .info-title {
+    font-family: 'Playfair Display', serif;
+    font-weight: 900;
+    color: var(--text);
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .toggle-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all .15s;
+  }
+  .toggle-btn:hover {
+    background: var(--border);
+    color: var(--surface);
+  }
+  .info-body {
+    margin-top: 10px;
+  }
+  .info-body p {
+    color: var(--text);
+    margin-bottom: 12px;
+    text-align: justify;
+  }
+  .info-body strong {
+    color: var(--text);
+    font-weight: 700;
+  }
+  .info-body code {
+    background: rgba(0,0,0,0.05);
+    padding: 2px 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+  }
+
+  .drop-cap::first-letter {
+    font-family: 'Playfair Display', serif;
+    font-size: 45px;
+    line-height: 36px;
+    padding-top: 4px;
+    padding-right: 8px;
+    padding-left: 2px;
+    float: left;
+    font-weight: 900;
+    color: var(--red);
+  }
+
+  .ornamental-divider {
+    font-family: 'Playfair Display', serif;
+    font-size: 13px;
+    text-align: center;
+    color: var(--muted);
+    letter-spacing: 0.8em;
+    margin: 8px 0;
+  }
+  
+  .legend-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    margin-top: 8px;
+    margin-bottom: 6px;
+  }
+  .legend-label {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    color: var(--text);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .legend-note {
+    font-family: 'Lora', serif;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 0 !important;
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside id="sidebar">
+  <div class="sidebar-meta">卷 I · 第 1 期 · 纽约版</div>
+  <h1>股市<span>叙事</span></h1>
+  <form id="add-form" style="flex-direction: column; gap: 8px;">
+    <div style="display: flex; gap: 6px; width: 100%;">
+      <input id="add-input" placeholder="股票代码" maxlength="10" autocomplete="off" />
+      <button type="submit" id="add-btn">+</button>
+    </div>
+    <select id="add-sector" class="scale-select" style="width: 100%; border-top: none; border-left: none; border-right: none; border-bottom: 2px solid var(--border);">
+      <option value="Energy">能源层 (Energy)</option>
+      <option value="Chips">芯片层 (Chips)</option>
+      <option value="Infra">基础设施层 (Infra)</option>
+      <option value="Models">模型层 (Models)</option>
+      <option value="Apps">应用层 (Applications)</option>
+    </select>
+  </form>
+  <div id="error-msg"></div>
+  <ul id="watchlist"></ul>
+</aside>
+
+<!-- Main -->
+<main id="main">
+  <div id="header">
+    <h2>地平线走势</h2>
+    <span class="subtitle">% 收益率 · 地平线堆叠图</span>
+    <div id="controls">
+      <button class="period-btn" data-period="5d">5天</button>
+      <button class="period-btn" data-period="1mo">1月</button>
+      <button class="period-btn active" data-period="3mo">3月</button>
+      <button class="period-btn" data-period="6mo">6月</button>
+      <button class="period-btn" data-period="1y">1年</button>
+      <button class="period-btn" data-period="2y">2年</button>
+      <button class="period-btn" data-period="5y">5年</button>
+      <button class="period-btn" data-period="max">最大</button>
+      <div class="gap-control">
+        <span>基准对标</span>
+        <select id="benchmark-select" class="scale-select">
+          <option value="none" selected>无 (绝对值)</option>
+          <option value="^GSPC">标普 500</option>
+          <option value="^IXIC">纳斯达克</option>
+          <option value="^DJI">道琼斯</option>
+        </select>
+      </div>
+      <div class="gap-control">
+        <span>比例尺</span>
+        <select id="scale-mode-select" class="scale-select">
+          <option value="linear">线性比例</option>
+          <option value="fib-ratios" selected>斐波那契比率</option>
+          <option value="fib-steps">斐波那契步长</option>
+        </select>
+      </div>
+      <div class="gap-control">
+        <span>色带层数</span>
+        <input id="bands-slider" type="range" min="1" max="10" value="3" step="1" />
+        <span id="bands-label">3</span>
+      </div>
+      <div class="gap-control">
+        <span>行高</span>
+        <input id="size-slider" type="range" min="14" max="120" value="26" step="1" />
+        <span id="size-label">26</span>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Info & Legend Card -->
+  <div id="info-panel" class="info-card">
+    <div class="info-header">
+      <span class="info-title">如何阅读地平线堆叠图</span>
+      <button id="toggle-info-btn" class="toggle-btn">显示说明</button>
+    </div>
+    <div id="info-content" class="info-body" style="display: none;">
+      <p class="drop-cap">
+        本图表展示了每只股票相对于所选时间段起始收盘价的<strong>归一化百分比收益率</strong>。由于价格已进行归一化处理，收益率为 <code>+10%</code> 代表股票较期初上涨了 10%，而 <code>-10%</code> 则代表较期初下跌了 10%。
+      </p>
+      <div class="legend-container">
+        <span class="legend-label">收益幅度与颜色波段</span>
+        <div id="diverging-legend" style="width: 100%; max-width: 600px; display: flex; justify-content: center;"></div>
+      </div>
+      <div class="ornamental-divider">✦ ✦ ✦</div>
+      <p class="legend-note">
+        <strong>地平线波段叠置法：</strong>该图表将收益率绝对值划分为等高的波段（Bands）并将它们重叠堆铺。颜色越深代表绝对变化幅度越大（即更高的波段），以此在有限的垂直空间内呈现更宽幅的价格变动。
+      </p>
+    </div>
+  </div>
+
+  <div id="chart-area">
+    <div id="loading">加载中…</div>
+    <svg id="ridgeline"></svg>
+  </div>
+</main>
+
+<div id="tooltip">
+  <div class="tt-sym"></div>
+  <div class="tt-date"></div>
+  <div class="tt-price"></div>
+</div>
+
+<script>
+const API = window.location.origin.startsWith("http") ? window.location.origin + "/api" : "http://localhost:5050/api";
+let watchlist = [];
+let priceData = [];
+let currentPeriod = "3mo";
+let horizonBands = 3;
+let horizonSize  = 26;
+let currentScaleMode = "fib-ratios";
+
+// ── Diverging color schema ──
+const posColor = "#10b981"; // Emerald green
+const negColor = "#f43f5e"; // Rose red
+
+// ── API helpers ──
+async function apiFetch(path, opts) {
+  const r = await fetch(API + path, opts);
+  return r.json();
+}
+
+async function loadWatchlist() {
+  watchlist = await apiFetch("/watchlist");
+  renderSidebar();
+}
+
+async function loadPrices() {
+  const symbols = Object.values(watchlist).flat();
+  if (!symbols.length) { priceData = []; renderChart(); return; }
+
+  const benchmarkSelect = document.getElementById("benchmark-select");
+  const benchmarkTicker = benchmarkSelect ? benchmarkSelect.value : "none";
+  let fetchSymbols = [...symbols];
+  if (benchmarkTicker !== "none" && !fetchSymbols.includes(benchmarkTicker)) {
+    fetchSymbols.push(benchmarkTicker);
+  }
+
+  document.getElementById("loading").style.display = "flex";
+  document.getElementById("ridgeline").style.display = "none";
+  priceData = await apiFetch("/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod);
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("ridgeline").style.display = "";
+  renderSidebar();
+  renderChart();
+}
+
+// ── Sidebar ──
+function renderSidebar() {
+  const ul = document.getElementById("watchlist");
+  ul.innerHTML = "";
+
+  const sectorLabels = {
+    "Energy": "能源层 (Energy)",
+    "Chips": "芯片层 (Chips)",
+    "Infra": "基础设施层 (Infra)",
+    "Models": "模型层 (Models)",
+    "Apps": "应用层 (Applications)"
+  };
+
+  Object.keys(watchlist).forEach(sectorKey => {
+    const symbols = watchlist[sectorKey] || [];
+    if (symbols.length === 0) return;
+
+    // Add sector header item
+    const headerLi = document.createElement("li");
+    headerLi.className = "sidebar-sector-header";
+    headerLi.style.pointerEvents = "none";
+    headerLi.style.background = "transparent";
+    headerLi.style.borderBottom = "2px solid var(--border)";
+    headerLi.style.padding = "8px 10px 3px";
+    headerLi.innerHTML = `<span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; font-weight:800; color:var(--text); text-transform:uppercase; letter-spacing:0.5px;">${sectorLabels[sectorKey]}</span>`;
+    ul.appendChild(headerLi);
+
+    symbols.forEach(sym => {
+      const entry = priceData.find(d => d.symbol === sym);
+      let changeHtml = "";
+      if (entry && entry.prices && entry.prices.length >= 2) {
+        const closes = entry.prices;
+        const first = closes[0].close, last = closes[closes.length - 1].close;
+        const pct = ((last - first) / first * 100).toFixed(1);
+        const cls = pct >= 0 ? "pos" : "neg";
+        changeHtml = `<span class="sym-change ${cls}">${pct >= 0 ? "+" : ""}${pct}%</span>`;
+      }
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="sym-name" style="color:var(--text)">${sym}</span>${changeHtml}<button class="del-btn" data-sym="${sym}" title="删除">×</button>`;
+      ul.appendChild(li);
+    });
+  });
+
+  ul.querySelectorAll(".del-btn").forEach(btn => {
+    btn.addEventListener("click", async e => {
+      e.stopPropagation();
+      const sym = btn.dataset.sym;
+      watchlist = await apiFetch("/watchlist/" + sym, { method: "DELETE" });
+      await loadPrices();
+    });
+  });
+}
+
+// ── Add ticker ──
+document.getElementById("add-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const inp = document.getElementById("add-input");
+  const secSelect = document.getElementById("add-sector");
+  const sym = inp.value.trim().toUpperCase();
+  const sector = secSelect.value;
+  const errEl = document.getElementById("error-msg");
+  errEl.style.display = "none";
+  if (!sym) return;
+  inp.value = "";
+  const result = await apiFetch("/watchlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol: sym, sector: sector })
+  });
+  if (result.error) {
+    let errMsg = result.error;
+    if (errMsg === "symbol required") errMsg = "请输入股票代码";
+    errEl.textContent = errMsg;
+    errEl.style.display = "block";
+    return;
+  }
+  watchlist = result;
+  await loadPrices();
+});
+
+// ── Benchmark selector ──
+document.getElementById("benchmark-select").addEventListener("change", function() {
+  loadPrices();
+});
+
+// ── Scale selector ──
+document.getElementById("scale-mode-select").addEventListener("change", function() {
+  currentScaleMode = this.value;
+  renderChart();
+});
+
+// ── Bands slider ──
+document.getElementById("bands-slider").addEventListener("input", function() {
+  horizonBands = +this.value;
+  document.getElementById("bands-label").textContent = horizonBands;
+  renderChart();
+});
+// ── Size slider ──
+document.getElementById("size-slider").addEventListener("input", function() {
+  horizonSize = +this.value;
+  document.getElementById("size-label").textContent = horizonSize;
+  renderChart();
+});
+
+// ── Period buttons ──
+document.querySelectorAll(".period-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".period-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentPeriod = btn.dataset.period;
+    loadPrices();
+  });
+});
+
+// ── Info toggle ──
+const toggleBtn = document.getElementById("toggle-info-btn");
+const infoContent = document.getElementById("info-content");
+toggleBtn.addEventListener("click", () => {
+  if (infoContent.style.display === "none") {
+    infoContent.style.display = "block";
+    toggleBtn.textContent = "隐藏说明";
+  } else {
+    infoContent.style.display = "none";
+    toggleBtn.textContent = "显示说明";
+  }
+});
+
+function getThresholds(scaleMode, bands, globalMax) {
+  if (scaleMode === "fib-ratios") {
+    let ratios = [0];
+    if (bands === 1) {
+      ratios = [0, 1];
+    } else if (bands === 2) {
+      ratios = [0, 0.618, 1];
+    } else if (bands === 3) {
+      ratios = [0, 0.382, 0.618, 1];
+    } else if (bands === 4) {
+      ratios = [0, 0.236, 0.382, 0.618, 1];
+    } else {
+      ratios = [0, 0.236, 0.382, 0.5, 0.618, 1];
+      while (ratios.length < bands + 1) {
+        ratios.splice(ratios.length - 1, 0, (ratios[ratios.length - 2] + 1) / 2);
+      }
+    }
+    return ratios.slice(0, bands + 1).map(r => r * globalMax);
+  } else if (scaleMode === "fib-steps") {
+    const fib = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377];
+    const steps = fib.slice(0, bands + 1);
+    const maxStep = steps[steps.length - 1];
+    return steps.map(s => (s / maxStep) * globalMax);
+  } else {
+    return d3.range(bands + 1).map(b => (b / bands) * globalMax);
+  }
+}
+
+// ── Horizon Chart (Observable idiom) ──
+const tooltip = document.getElementById("tooltip");
+
+function renderChart() {
+  const svgEl = document.getElementById("ridgeline");
+  svgEl.innerHTML = "";
+
+  const sectorOrder = ["Energy", "Chips", "Infra", "Models", "Apps"];
+  const sectorLabels = {
+    "Energy": "能源层 (Energy)",
+    "Chips": "芯片层 (Chips)",
+    "Infra": "基础设施层 (Infra)",
+    "Models": "模型层 (Models)",
+    "Apps": "应用层 (Applications)"
+  };
+
+  const groupedData = [];
+  let totalRows = 0;
+  sectorOrder.forEach(sec => {
+    const symbols = watchlist[sec] || [];
+    const secPrices = [];
+    symbols.forEach(sym => {
+      const entry = priceData.find(d => d.symbol === sym && d.prices && d.prices.length > 1);
+      if (entry) {
+        secPrices.push(entry);
+        totalRows++;
+      }
+    });
+    if (secPrices.length > 0) {
+      groupedData.push({ sector: sec, label: sectorLabels[sec], items: secPrices });
+    }
+  });
+
+  if (groupedData.length === 0) return;
+
+  const container = document.getElementById("chart-area");
+  const bands = horizonBands;
+  const size  = horizonSize;
+  const padding = 0.5;
+  const secHeaderHeight = 18;
+
+  const marginTop    = 18;
+  const marginRight  = 4;
+  const marginBottom = 10;
+  const marginLeft   = 48;
+  const width  = Math.max(600, container.clientWidth - 24);
+
+  const renderItems = [];
+  let currentY = marginTop + 6;
+
+  groupedData.forEach(secGroup => {
+    renderItems.push({
+      type: "header",
+      label: secGroup.label,
+      y: currentY,
+      height: secHeaderHeight
+    });
+    currentY += secHeaderHeight;
+
+    secGroup.items.forEach(entry => {
+      renderItems.push({
+        type: "row",
+        symbol: entry.symbol,
+        prices: entry.prices,
+        y: currentY,
+        height: size
+      });
+      currentY += size;
+    });
+  });
+
+  const height = currentY + marginBottom;
+
+  const benchmarkSelect = document.getElementById("benchmark-select");
+  const benchmarkTicker = benchmarkSelect ? benchmarkSelect.value : "none";
+  let benchmarkPricesMap = new Map();
+
+  if (benchmarkTicker !== "none") {
+    const benchEntry = priceData.find(d => d.symbol === benchmarkTicker && d.prices && d.prices.length > 1);
+    if (benchEntry) {
+      const benchBase = benchEntry.prices[0].close;
+      benchEntry.prices.forEach(p => {
+        benchmarkPricesMap.set(p.date, (p.close - benchBase) / benchBase * 100);
+      });
+    }
+  }
+
+  // Update subtitle based on selected benchmark
+  const subEl = document.querySelector("#header .subtitle");
+  if (subEl) {
+    if (benchmarkTicker === "none") {
+      subEl.textContent = "% 收益率 · 地平线堆叠图";
+    } else {
+      const benchName = benchmarkSelect.options[benchmarkSelect.selectedIndex].text;
+      subEl.textContent = `对标 ${benchName} 的超额收益率 · 地平线堆叠图`;
+    }
+  }
+
+  const flat = [];
+  groupedData.forEach(g => {
+    g.items.forEach(d => {
+      const base = d.prices[0].close;
+      d.prices.forEach(p => {
+        let val = (p.close - base) / base * 100;
+        if (benchmarkTicker !== "none") {
+          val -= (benchmarkPricesMap.get(p.date) || 0);
+        }
+        flat.push({
+          name:  d.symbol,
+          date:  new Date(p.date),
+          value: val,
+          raw:   p.close,
+        });
+      });
+    });
+  });
+
+  const pointsMap = new Map();
+  groupedData.forEach(g => {
+    g.items.forEach(d => {
+      const base = d.prices[0].close;
+      const pts = d.prices.map(p => {
+        let val = (p.close - base) / base * 100;
+        if (benchmarkTicker !== "none") {
+          val -= (benchmarkPricesMap.get(p.date) || 0);
+        }
+        return {
+          name:  d.symbol,
+          date:  new Date(p.date),
+          value: val,
+          raw:   p.close,
+        };
+      }).sort((a,b) => a.date - b.date);
+      pointsMap.set(d.symbol, pts);
+    });
+  });
+
+  const x = d3.scaleUtc()
+    .domain(d3.extent(flat, d => d.date))
+    .range([marginLeft, width - marginRight]);
+
+  const globalMax = d3.max(flat, d => Math.abs(d.value));
+  const thresholds = getThresholds(currentScaleMode, bands, globalMax);
+
+  const legendDiv = document.getElementById("diverging-legend");
+  if (legendDiv) {
+    legendDiv.innerHTML = "";
+
+    const totalSegments = 2 * bands;
+    const wSvg = 600;
+    const hSvg = 45;
+    const margin = { left: 45, right: 45 };
+    const barWidth = wSvg - margin.left - margin.right;
+    const segWidth = barWidth / totalSegments;
+
+    const svg = d3.create("svg")
+      .attr("width", "100%")
+      .attr("height", hSvg)
+      .attr("viewBox", `0 0 ${wSvg} ${hSvg}`)
+      .style("overflow", "visible");
+
+    for (let i = 0; i < totalSegments; i++) {
+      let colorStyle;
+      if (i < bands) {
+        const b = bands - 1 - i;
+        const opacity = 0.15 + 0.85 * ((b + 1) / bands);
+        colorStyle = d3.color(negColor).copy({ opacity: opacity });
+      } else {
+        const b = i - bands;
+        const opacity = 0.15 + 0.85 * ((b + 1) / bands);
+        colorStyle = d3.color(posColor).copy({ opacity: opacity });
+      }
+
+      svg.append("rect")
+        .attr("x", margin.left + i * segWidth)
+        .attr("y", 6)
+        .attr("width", segWidth)
+        .attr("height", 12)
+        .attr("fill", colorStyle);
+      
+      if (i > 0) {
+        svg.append("line")
+          .attr("x1", margin.left + i * segWidth)
+          .attr("x2", margin.left + i * segWidth)
+          .attr("y1", 6)
+          .attr("y2", 18)
+          .attr("stroke", "var(--bg)")
+          .attr("stroke-width", 1.5);
+      }
+    }
+
+    svg.append("rect")
+      .attr("x", margin.left)
+      .attr("y", 6)
+      .attr("width", barWidth)
+      .attr("height", 12)
+      .attr("fill", "none")
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1);
+
+    for (let k = 0; k <= totalSegments; k++) {
+      const xTick = margin.left + k * segWidth;
+      let val;
+      if (k < bands) {
+        val = -thresholds[bands - k];
+      } else if (k === bands) {
+        val = 0;
+      } else {
+        val = thresholds[k - bands];
+      }
+
+      svg.append("line")
+        .attr("x1", xTick)
+        .attr("x2", xTick)
+        .attr("y1", 18)
+        .attr("y2", 23)
+        .attr("stroke", "var(--border)")
+        .attr("stroke-width", 1);
+
+      let showLabel = false;
+      if (bands <= 4) {
+        showLabel = true;
+      } else if (bands <= 7) {
+        showLabel = (k % 2 === 0);
+      } else {
+        const mid = Math.round(bands / 2);
+        showLabel = (k === 0 || k === 2 * bands || k === bands || k === mid || k === bands + mid);
+      }
+
+      if (showLabel) {
+        let labelText = "";
+        if (val === 0) {
+          labelText = "0%";
+        } else {
+          labelText = (val > 0 ? "+" : "") + val.toFixed(1) + "%";
+        }
+
+        svg.append("text")
+          .attr("x", xTick)
+          .attr("y", 35)
+          .attr("text-anchor", "middle")
+          .attr("fill", "var(--muted)")
+          .style("font-size", "10px")
+          .style("font-family", "monospace")
+          .text(labelText);
+      }
+    }
+
+    legendDiv.appendChild(svg.node());
+  }
+
+  const uid = `hz-${Math.random().toString(16).slice(2)}`;
+
+  svgEl.setAttribute("width", width);
+  svgEl.setAttribute("height", height);
+  svgEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svgEl.style.maxWidth = "100%";
+  svgEl.style.height   = "auto";
+  svgEl.style.font     = "10px sans-serif";
+
+  const s = d3.select(svgEl);
+
+  const getBandAreaPath = (vals, bandIdx, sign) => {
+    const t0 = thresholds[bandIdx];
+    const t1 = thresholds[bandIdx + 1];
+    const bandHeight = t1 - t0;
+    if (bandHeight <= 0) return "";
+
+    const areaGen = d3.area()
+      .defined(d => !isNaN(d.value))
+      .x(d => x(d.date))
+      .curve(d3.curveBasis);
+
+    if (sign > 0) {
+      areaGen
+        .y0(size)
+        .y1(d => {
+          const val = Math.max(0, d.value);
+          const clamped = Math.min(t1, Math.max(t0, val)) - t0;
+          const h = (clamped / bandHeight) * (size - padding);
+          return size - h;
+        });
+    } else {
+      areaGen
+        .y0(0)
+        .y1(d => {
+          const val = Math.max(0, -d.value);
+          const clamped = Math.min(t1, Math.max(t0, val)) - t0;
+          const h = (clamped / bandHeight) * (size - padding);
+          return h;
+        });
+    }
+    return areaGen(vals);
+  };
+
+  const headersData = renderItems.filter(d => d.type === "header");
+  const rowsData = renderItems.filter(d => d.type === "row");
+
+  const headerG = s.append("g")
+    .selectAll("g")
+    .data(headersData)
+    .join("g")
+      .attr("transform", d => `translate(0,${d.y})`);
+
+  headerG.append("rect")
+    .attr("x", marginLeft)
+    .attr("y", 0)
+    .attr("width", width - marginLeft - marginRight)
+    .attr("height", secHeaderHeight - 4)
+    .attr("fill", "var(--border)")
+    .attr("stroke", "none");
+
+  headerG.append("text")
+    .attr("x", marginLeft + 8)
+    .attr("y", (secHeaderHeight - 4) / 2)
+    .attr("dy", "0.35em")
+    .style("font-family", "'JetBrains Mono', monospace")
+    .style("font-size", "9px")
+    .style("font-weight", "900")
+    .style("fill", "var(--surface)")
+    .text(d => d.label.toUpperCase());
+
+  const rowG = s.append("g")
+    .selectAll("g")
+    .data(rowsData)
+    .join("g")
+      .attr("transform", d => `translate(0,${d.y})`);
+
+  rowG.each(function(rowData, rowIdx) {
+    const rowSelection = d3.select(this);
+
+    const defs = rowSelection.append("defs");
+    defs.append("clipPath")
+        .attr("id", `${uid}-clip-${rowIdx}`)
+      .append("rect")
+        .attr("x", marginLeft)
+        .attr("y", padding)
+        .attr("width", width - marginLeft - marginRight)
+        .attr("height", size - padding);
+  });
+
+  rowG.each(function(rowData, rowIdx) {
+    const rowSelection = d3.select(this);
+    const pts = pointsMap.get(rowData.symbol) || [];
+
+    rowSelection.selectAll(".pos-band")
+      .data(d3.range(bands).map(b => ({ band: b, vals: pts })))
+      .join("path")
+        .attr("class", "pos-band")
+        .attr("d", d => getBandAreaPath(d.vals, d.band, 1))
+        .attr("fill", d => {
+          const t = (d.band + 1) / bands;
+          return d3.color(posColor).copy({ opacity: 0.15 + 0.85 * t });
+        })
+        .attr("clip-path", `url(#${uid}-clip-${rowIdx})`);
+
+    rowSelection.selectAll(".neg-band")
+      .data(d3.range(bands).map(b => ({ band: b, vals: pts })))
+      .join("path")
+        .attr("class", "neg-band")
+        .attr("d", d => getBandAreaPath(d.vals, d.band, -1))
+        .attr("fill", d => {
+          const t = (d.band + 1) / bands;
+          return d3.color(negColor).copy({ opacity: 0.15 + 0.85 * t });
+        })
+        .attr("clip-path", `url(#${uid}-clip-${rowIdx})`);
+
+    rowSelection.append("text")
+      .attr("x", marginLeft - 4)
+      .attr("y", (size + padding) / 2)
+      .attr("dy", "0.35em")
+      .attr("text-anchor", "end")
+      .style("font-size", "11px")
+      .style("font-weight", "700")
+      .style("fill", "var(--text)")
+      .text(rowData.symbol);
+
+    rowSelection.append("line")
+      .attr("x1", marginLeft).attr("x2", width - marginRight)
+      .attr("y1", size - 0.5).attr("y2", size - 0.5)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 0.5);
+
+    rowSelection.append("rect")
+      .attr("x", marginLeft).attr("y", 0)
+      .attr("width", width - marginLeft - marginRight)
+      .attr("height", size)
+      .attr("fill", "transparent")
+      .on("mousemove", function(event) {
+        const [mx] = d3.pointer(event);
+        const hoverDate = x.invert(mx);
+        let best = pts[0], bestDist = Infinity;
+        pts.forEach(v => {
+          const dist = Math.abs(v.date - hoverDate);
+          if (dist < bestDist) { bestDist = dist; best = v; }
+        });
+        const color = best.value >= 0 ? posColor : negColor;
+        tooltip.style.opacity = "1";
+        tooltip.style.left = (event.clientX + 14) + "px";
+        tooltip.style.top  = (event.clientY - 50) + "px";
+        tooltip.querySelector(".tt-sym").textContent  = rowData.symbol;
+        tooltip.querySelector(".tt-sym").style.color  = color;
+        tooltip.querySelector(".tt-date").textContent = best.date.toISOString().slice(0,10);
+        const prefix = benchmarkTicker !== "none" ? "超额 " : "";
+        tooltip.querySelector(".tt-price").textContent =
+          "$" + best.raw.toFixed(2) + "  " + prefix +
+          (best.value >= 0 ? "+" : "") + best.value.toFixed(2) + "%";
+        tooltip.querySelector(".tt-price").style.color = color;
+      })
+      .on("mouseleave", () => { tooltip.style.opacity = "0"; });
+  });
+
+  s.append("g")
+    .attr("transform", `translate(0,${marginTop})`)
+    .attr("class", "x-axis-shared")
+    .call(
+      d3.axisTop(x)
+        .ticks(width / 80)
+        .tickSizeOuter(0)
+    )
+    .call(ax => ax.selectAll(".tick")
+      .filter(d => x(d) < marginLeft || x(d) >= width - marginRight)
+      .remove()
+    )
+    .call(ax => ax.select(".domain").remove());
+}
+
+window.addEventListener("resize", renderChart);
+
+// ── Init ──
+(async () => {
+  await loadWatchlist();
+  await loadPrices();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,2098 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speleothems Stock Charts</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+  :root {
+    --background: #080808;
+    --surface:    #0e0e0e;
+    --surface-2:  #141414;
+    --foreground: #e8e8e8;
+    --muted:      #0e0e0e;
+    --muted-foreground: #555555;
+    --dim:        #333333;
+    --accent:     #E8960A;   /* warm amber — slightly less saturated than pure orange */
+    --accent-dim: rgba(232,150,10,0.08);
+    --border:     #1e1e1e;
+    --border-mid: #2a2a2a;
+    --input:      #0e0e0e;
+    --pos:        #18c96a;   /* muted terminal green */
+    --neg:        #e84040;   /* muted terminal red */
+    --ring: #E8960A;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border-radius: 0 !important;
+  }
+
+  /* Scrollbars: Minimalistic */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: "JetBrains Mono", monospace;
+    display: flex;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+  .market-live .market-dot {
+    background: var(--pos) !important;
+    animation: pulse-dot 1.4s ease-in-out infinite;
+  }
+  .market-live .market-badge-label { color: var(--pos); }
+  .market-live { border-color: var(--pos) !important; }
+
+  /* Style Lucide Icons globally for stroke width and size */
+  .lucide {
+    stroke-width: 1.5px;
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+    vertical-align: middle;
+  }
+
+  /* Interactive hover transitions for stock chart groups */
+  .row-group, .bracket-group {
+    transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .premium-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    padding: 0 10px;
+    height: 32px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    outline: none;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .premium-input::placeholder { color: var(--muted-foreground); }
+  .premium-input:focus {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+
+  .premium-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    padding: 0 28px 0 10px;
+    height: 32px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    outline: none;
+    cursor: pointer;
+    width: 100%;
+    transition: border-color 120ms ease;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23555' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 11px;
+  }
+  .premium-select:focus {
+    border-color: var(--accent);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23E8960A' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  }
+
+  .row-group .row-del-btn {
+    opacity: 0;
+    transition: opacity 150ms ease, color 150ms ease;
+  }
+  .row-group:hover .row-del-btn {
+    opacity: 1;
+  }
+  .row-del-btn:hover {
+    color: var(--accent) !important;
+  }
+
+  #main {
+    width: 100%;
+    max-width: 768px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    background-color: var(--background);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+
+  /* ── Desktop two-column layout ── */
+  @media (min-width: 1024px) {
+    body { justify-content: stretch; }
+
+    #main {
+      max-width: 100%;
+      flex-direction: row;
+      border-left: none;
+      border-right: none;
+    }
+
+    /* Left sidebar: brand + controls + stats */
+    #sidebar {
+      width: 280px;
+      min-width: 280px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow-y: auto;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    /* Right panel: drawers + chart, fills remaining width */
+    #right-panel {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* On desktop the header is inside #sidebar, hide the mobile header */
+    #header { display: none !important; }
+
+    /* Show the desktop sidebar header */
+    #sidebar-header { display: flex !important; }
+
+    /* Drawers attach to right panel on desktop */
+    #settings-drawer,
+    #info-drawer { border-left: none; }
+
+    /* Dashboard content fills right panel */
+    #dashboard-content {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Stats use a 2x2 grid in sidebar */
+    #stats-grid {
+      grid-template-columns: repeat(2, 1fr);
+      border: none;
+      background: none;
+      gap: 1px;
+    }
+
+    #stats-grid .stat-card {
+      background: var(--surface-2);
+    }
+  }
+
+  @media (min-width: 1400px) {
+    #sidebar { width: 300px; min-width: 300px; }
+  }
+
+  /* ── Two-column chart on desktop ── */
+  @media (min-width: 1024px) {
+    /* The SVG fills the right panel chart area fully */
+    #chart-area {
+      padding: 16px 20px;
+    }
+    /* Hide mobile stats grid on desktop (sidebar has its own) */
+    #stats-grid { display: none !important; }
+    /* Desktop dashboard content: chart card only, no padding waste */
+    #dashboard-content { padding: 0; gap: 0; }
+    .dashboard-card { border-left: none; border-right: none; border-top: none; }
+  }
+
+  .period-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .period-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--muted-foreground);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 4px 9px;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .period-tab:hover {
+    color: var(--foreground);
+    border-color: var(--border-mid);
+  }
+  .period-tab.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .control-group-select {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--muted-foreground);
+  }
+
+  .settings-toggle-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted-foreground);
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 120ms, color 120ms, background 120ms;
+    flex-shrink: 0;
+  }
+  .settings-toggle-btn:hover {
+    border-color: var(--border-mid);
+    color: var(--foreground);
+    background: var(--surface-2);
+  }
+  .settings-toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .settings-toggle-btn .lucide {
+    width: 13px;
+    height: 13px;
+    transition: transform 280ms cubic-bezier(0.25, 0, 0, 1);
+  }
+  .settings-toggle-btn.active .lucide {
+    transform: rotate(45deg);
+  }
+
+  .settings-drawer {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 240ms cubic-bezier(0.25, 0, 0, 1), padding 240ms cubic-bezier(0.25, 0, 0, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 4;
+  }
+  .settings-drawer.expanded {
+    max-height: 400px;
+    padding: 16px 24px;
+    overflow-y: auto;
+  }
+  @media (min-width: 600px) {
+    .settings-drawer { flex-direction: row; flex-wrap: wrap; gap: 28px; }
+    .settings-drawer.expanded { max-height: 160px; padding: 16px 28px; }
+  }
+  .drawer-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .drawer-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  /* Ranges */
+  .premium-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    height: 2px;
+    width: 90px;
+    outline: none;
+  }
+  .premium-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--accent);
+    height: 12px;
+    width: 12px;
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    transition: transform 100ms;
+  }
+  .premium-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+  }
+  .slider-val-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--foreground);
+    min-width: 16px;
+  }
+
+  #dashboard-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    z-index: 1;
+  }
+  @media (min-width: 600px) {
+    #dashboard-content { padding: 20px 24px; gap: 20px; }
+  }
+
+  #stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+    background-color: var(--border);
+    border: 1px solid var(--border);
+  }
+  @media (min-width: 600px) {
+    #stats-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+  .stat-card {
+    background-color: var(--surface);
+    padding: 16px 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* subtle left accent line on hover */
+  .stat-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 150ms ease;
+  }
+  .stat-card:hover::before { opacity: 1; }
+  .stat-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+  .stat-val {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--foreground);
+    margin-top: 4px;
+  }
+  .stat-meta {
+    font-size: 10px;
+    color: var(--muted-foreground);
+    letter-spacing: 0.03em;
+    margin-top: 2px;
+  }
+  .stat-card .trend-pill {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .trend-pill.pos { color: var(--pos); }
+  .trend-pill.neg { color: var(--neg); }
+
+  .dashboard-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    position: relative;
+  }
+  .card-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* D3 Area styles */
+  #chart-area {
+    padding: 24px;
+    position: relative;
+    min-height: 200px;
+  }
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--muted-foreground);
+    background: var(--background);
+    z-index: 2;
+  }
+  #ridgeline {
+    display: block;
+    width: 100%;
+  }
+  .x-axis-shared text {
+    fill: var(--muted-foreground);
+    font-size: 9px;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .x-axis-shared path, .x-axis-shared line {
+    stroke: var(--border);
+  }
+
+  /* Diverging color legend inside accordion */
+  .legend-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background: var(--muted);
+    padding: 16px;
+    border: 1px solid var(--border);
+    margin-top: 12px;
+  }
+
+  /* Editorial Accordion */
+  .info-body {
+    font-family: "Inter", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--foreground);
+  }
+  .info-body p {
+    margin: 0;
+  }
+  .info-body strong {
+    color: var(--foreground);
+    font-weight: 700;
+  }
+  .info-body code {
+    background: var(--border);
+    padding: 2px 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .divider-line {
+    height: 1px;
+    background: var(--border);
+    width: 100%;
+  }
+
+  #tooltip {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border-mid);
+    padding: 12px 14px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 80ms ease;
+    z-index: 100;
+    width: 190px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+    font-family: "JetBrains Mono", monospace;
+  }
+  #tooltip .tt-sym {
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  #tooltip .tt-sector {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+    background: var(--border-mid);
+    padding: 1px 5px;
+  }
+  #tooltip .tt-date {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+    margin-top: 1px;
+  }
+  #tooltip .tt-metric-label {
+    font-size: 9px;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+  #tooltip .tt-metric-val {
+    font-size: 13px;
+    font-weight: 700;
+  }
+  #tooltip .tt-metric-val-sm {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  #tooltip .tt-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 7px 0;
+  }
+  #tooltip .tt-sparkline-label {
+    font-size: 9px;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 5px;
+  }
+</style>
+</head>
+<body>
+
+<main id="main">
+
+  <!-- ══ DESKTOP SIDEBAR (hidden on mobile via CSS) ══════════════════════════ -->
+  <aside id="sidebar" style="display:none;">
+
+    <!-- Brand -->
+    <div id="sidebar-header" style="display:none; flex-direction:column; gap:10px; padding:20px 20px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+            <span style="font-size:15px; font-weight:800; letter-spacing:0.06em;">SPELEOTHEMS</span>
+            <span style="font-size:15px; font-weight:800; letter-spacing:0.06em; color:var(--accent);">CHARTS</span>
+            <span style="font-size:9px; font-weight:700; color:var(--muted-foreground); border:1px solid var(--border-mid); padding:1px 5px; letter-spacing:0.12em;">TERMINAL</span>
+          </div>
+          <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted-foreground); margin-top:3px;">% RETURN · HORIZON CHART</div>
+        </div>
+        <div style="display:flex; gap:4px;">
+          <button id="info-toggle-btn" class="settings-toggle-btn" title="About">
+            <i data-lucide="info"></i>
+          </button>
+          <button id="settings-toggle-btn" class="settings-toggle-btn" title="Settings">
+            <i data-lucide="sliders-horizontal"></i>
+          </button>
+        </div>
+      </div>
+      <!-- Market badge -->
+      <span id="market-status-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:700;letter-spacing:0.1em;padding:2px 7px;border:1px solid var(--border-mid);color:var(--muted-foreground);align-self:flex-start;">
+        <span class="market-dot" style="width:5px;height:5px;border-radius:50% !important;background:var(--muted-foreground);display:inline-block;"></span>
+        <span class="market-badge-label" id="market-label">–</span>
+      </span>
+    </div>
+
+    <!-- Add ticker form -->
+    <div style="padding:14px 16px; border-bottom:1px solid var(--border); flex-shrink:0; position:relative;">
+      <form id="add-form" style="display:flex; flex-direction:column; gap:6px;">
+        <input id="add-input" class="premium-input" placeholder="Ticker symbol (e.g. NVDA)" maxlength="10" autocomplete="off" style="width:100%;" />
+        <div style="display:flex; gap:5px;">
+          <select id="add-sector" class="premium-select" style="flex:1;">
+            <option value="AI Models">AI Models</option>
+            <option value="AI Apps">AI Apps</option>
+            <option value="Chips Compute">Chips Compute</option>
+            <option value="Chips Memory">Chips Memory</option>
+            <option value="Chips Equipment">Chips Equipment</option>
+            <option value="DC Infra">DC Infra</option>
+            <option value="Cloud">Cloud</option>
+            <option value="Nuclear">Nuclear</option>
+            <option value="Grid &amp; Renewables">Grid &amp; Renewables</option>
+            <option value="Oil &amp; Gas">Oil &amp; Gas</option>
+            <option value="Autonomy">Autonomy</option>
+            <option value="Defense">Defense</option>
+            <option value="BioHealth">BioHealth</option>
+            <option value="Fintech">Fintech</option>
+            <option value="Consumer">Consumer</option>
+          </select>
+          <button type="submit" class="settings-toggle-btn" style="width:32px; height:32px; flex-shrink:0;">
+            <i data-lucide="plus" style="width:13px;height:13px;"></i>
+          </button>
+        </div>
+      </form>
+      <div id="error-msg" style="position:absolute;bottom:-24px;left:0;right:0;background:var(--surface-2);border:1px solid var(--neg);padding:3px 8px;font-size:9px;font-weight:700;color:var(--neg);z-index:10;display:none;text-align:center;letter-spacing:0.05em;"></div>
+    </div>
+
+    <!-- Period tabs (vertical stack on desktop) -->
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted-foreground);margin-bottom:8px;">TIMEFRAME</div>
+      <div class="period-tabs" style="flex-wrap:wrap; gap:3px;">
+        <button class="period-tab active" data-period="1d">1D</button>
+        <button class="period-tab" data-period="5d">5D</button>
+        <button class="period-tab" data-period="1mo">1M</button>
+        <button class="period-tab" data-period="3mo">3M</button>
+        <button class="period-tab" data-period="6mo">6M</button>
+        <button class="period-tab" data-period="1y">1Y</button>
+        <button class="period-tab" data-period="2y">2Y</button>
+        <button class="period-tab" data-period="5y">5Y</button>
+        <button class="period-tab" data-period="max">MAX</button>
+      </div>
+    </div>
+
+    <!-- Benchmark -->
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted-foreground);margin-bottom:8px;">BENCHMARK</div>
+      <select id="benchmark-select-desktop" class="premium-select" style="width:100%;">
+        <option value="none" selected>None (absolute)</option>
+        <option value="^GSPC">S&amp;P 500</option>
+        <option value="^IXIC">Nasdaq</option>
+        <option value="^DJI">Dow Jones</option>
+      </select>
+    </div>
+
+    <!-- Stats (2×2 grid in sidebar) -->
+    <div id="stats-grid-desktop" style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-top:1px solid var(--border);border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div id="stat-benchmark-d" class="stat-card" style="background:var(--surface-2);padding:12px 14px;">
+        <span class="stat-label">Benchmark</span>
+        <div class="stat-val" style="font-size:18px;">—</div>
+        <div class="stat-meta"></div>
+        <span class="trend-pill" style="display:none;"></span>
+      </div>
+      <div id="stat-gainer-d" class="stat-card" style="background:var(--surface-2);padding:12px 14px;">
+        <span class="stat-label">Top</span>
+        <div class="stat-val" style="font-size:18px;">—</div>
+        <div class="stat-meta"></div>
+        <span class="trend-pill pos" style="display:none;"></span>
+      </div>
+      <div id="stat-lagger-d" class="stat-card" style="background:var(--surface-2);padding:12px 14px;">
+        <span class="stat-label">Worst</span>
+        <div class="stat-val" style="font-size:18px;">—</div>
+        <div class="stat-meta"></div>
+        <span class="trend-pill neg" style="display:none;"></span>
+      </div>
+      <div id="stat-narrative-d" class="stat-card" style="background:var(--surface-2);padding:12px 14px;">
+        <span class="stat-label">Avg</span>
+        <div class="stat-val" style="font-size:18px;">—</div>
+        <div class="stat-meta"></div>
+        <span class="trend-pill" style="display:none;"></span>
+      </div>
+    </div>
+
+    <!-- Chart settings inline (no drawer needed on desktop) -->
+    <div style="padding:14px 16px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted-foreground);margin-bottom:2px;">CHART SETTINGS</div>
+      <div class="drawer-group">
+        <span class="drawer-label">Scale</span>
+        <select id="scale-mode-select-d" class="premium-select" style="flex:1;">
+          <option value="linear">Linear</option>
+          <option value="fib-ratios" selected>Fibonacci</option>
+          <option value="fib-steps">Fib steps</option>
+        </select>
+      </div>
+      <div class="drawer-group">
+        <span class="drawer-label">Domain</span>
+        <select id="domain-mode-select-d" class="premium-select" style="flex:1;">
+          <option value="global" selected>Global</option>
+          <option value="local">Per-row</option>
+        </select>
+      </div>
+      <div class="drawer-group">
+        <span class="drawer-label">Bands <span id="bands-label-d" class="slider-val-label">3</span></span>
+        <input id="bands-slider-d" class="premium-slider" type="range" min="1" max="10" value="3" step="1" style="flex:1;width:auto;" />
+      </div>
+      <div class="drawer-group">
+        <span class="drawer-label">Height <span id="size-label-d" class="slider-val-label">26</span></span>
+        <input id="size-slider-d" class="premium-slider" type="range" min="14" max="60" value="26" step="1" style="flex:1;width:auto;" />
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ══ RIGHT PANEL ═════════════════════════════════════════════════════════ -->
+  <div id="right-panel" style="display:contents;">
+
+  <!-- Mobile Header / Navbar (hidden on desktop) -->
+  <header id="header" style="padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; background: var(--surface);">
+
+    <!-- Row 1: Brand + icon buttons -->
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--foreground);">SPELEOTHEMS</span>
+          <span style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--accent);">CHARTS</span>
+          <span style="font-size: 9px; font-weight: 700; color: var(--muted-foreground); border: 1px solid var(--border-mid); padding: 1px 5px; letter-spacing: 0.12em; margin-left: 2px;">TERMINAL</span>
+          <span id="market-status-badge-mobile" style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:700;letter-spacing:0.1em;padding:1px 6px;border:1px solid var(--border-mid);color:var(--muted-foreground);margin-left:4px;">
+            <span id="market-dot-mobile" style="width:5px;height:5px;border-radius:50% !important;background:var(--muted-foreground);display:inline-block;"></span>
+            <span class="market-badge-label" id="market-label-mobile">–</span>
+          </span>
+        </div>
+        <div class="subtitle" style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-top: 3px;">% RETURN OVERLAY · HORIZON CHART</div>
+      </div>
+      <div style="display: flex; gap: 4px; align-items: center;">
+        <button id="info-toggle-btn-mobile" class="settings-toggle-btn" title="About horizon chart">
+          <i data-lucide="info"></i>
+        </button>
+        <button id="settings-toggle-btn-mobile" class="settings-toggle-btn" title="Chart settings">
+          <i data-lucide="sliders-horizontal"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Row 2: Add ticker form -->
+    <div style="position: relative;">
+      <form id="add-form-mobile" style="display: flex; gap: 5px; align-items: center;">
+        <input id="add-input-mobile" class="premium-input" placeholder="Ticker symbol (e.g. NVDA)" maxlength="10" autocomplete="off" style="flex: 1;" />
+        <select id="add-sector-mobile" class="premium-select" style="width: 140px; flex-shrink: 0;">
+          <option value="AI Models">AI Models</option>
+          <option value="AI Apps">AI Apps</option>
+          <option value="Chips Compute">Chips Compute</option>
+          <option value="Chips Memory">Chips Memory</option>
+          <option value="Chips Equipment">Chips Equipment</option>
+          <option value="DC Infra">DC Infra</option>
+          <option value="Cloud">Cloud</option>
+          <option value="Nuclear">Nuclear</option>
+          <option value="Grid &amp; Renewables">Grid &amp; Renewables</option>
+          <option value="Oil &amp; Gas">Oil &amp; Gas</option>
+          <option value="Autonomy">Autonomy</option>
+          <option value="Defense">Defense</option>
+          <option value="BioHealth">BioHealth</option>
+          <option value="Fintech">Fintech</option>
+          <option value="Consumer">Consumer</option>
+        </select>
+        <button type="submit" class="settings-toggle-btn" style="width: 30px; height: 32px; flex-shrink: 0;">
+          <i data-lucide="plus" style="width: 13px; height: 13px;"></i>
+        </button>
+      </form>
+      <div id="error-msg-mobile" style="position: absolute; top: 34px; left: 0; right: 0; background: var(--surface-2); border: 1px solid var(--neg); padding: 3px 8px; font-size: 9px; font-weight: 700; color: var(--neg); z-index: 10; display: none; text-align: center; letter-spacing: 0.05em;"></div>
+    </div>
+
+    <!-- Row 3: Period tabs + benchmark -->
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+      <div class="period-tabs" style="overflow-x: auto; -webkit-overflow-scrolling: touch; flex: 1; min-width: 0;">
+        <button class="period-tab active" data-period="1d">1D</button>
+        <button class="period-tab" data-period="5d">5D</button>
+        <button class="period-tab" data-period="1mo">1M</button>
+        <button class="period-tab" data-period="3mo">3M</button>
+        <button class="period-tab" data-period="6mo">6M</button>
+        <button class="period-tab" data-period="1y">1Y</button>
+        <button class="period-tab" data-period="2y">2Y</button>
+        <button class="period-tab" data-period="5y">5Y</button>
+        <button class="period-tab" data-period="max">MAX</button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 7px; flex-shrink: 0;">
+        <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted-foreground); white-space: nowrap;">vs.</span>
+        <select id="benchmark-select" class="premium-select" style="width: 118px;">
+          <option value="none" selected>None (absolute)</option>
+          <option value="^GSPC">S&amp;P 500</option>
+          <option value="^IXIC">Nasdaq</option>
+          <option value="^DJI">Dow Jones</option>
+        </select>
+      </div>
+    </div>
+
+  </header>
+
+  <!-- Settings drawer (mobile) -->
+  <div id="settings-drawer" class="settings-drawer">
+    <div class="drawer-group">
+      <span class="drawer-label">Scale</span>
+      <select id="scale-mode-select" class="premium-select" style="width: 120px;">
+        <option value="linear">Linear</option>
+        <option value="fib-ratios" selected>Fibonacci ratios</option>
+        <option value="fib-steps">Fibonacci steps</option>
+      </select>
+    </div>
+    <div class="drawer-group">
+      <span class="drawer-label">Domain</span>
+      <select id="domain-mode-select" class="premium-select" style="width: 120px;">
+        <option value="global" selected>Global</option>
+        <option value="local">Per-row</option>
+      </select>
+    </div>
+    <div class="drawer-group">
+      <span class="drawer-label">Bands <span id="bands-label" class="slider-val-label">3</span></span>
+      <input id="bands-slider" class="premium-slider" type="range" min="1" max="10" value="3" step="1" />
+    </div>
+    <div class="drawer-group">
+      <span class="drawer-label">Row height <span id="size-label" class="slider-val-label">26</span></span>
+      <input id="size-slider" class="premium-slider" type="range" min="14" max="120" value="26" step="1" />
+    </div>
+  </div>
+
+  <!-- Info drawer (mobile) -->
+  <div id="info-drawer" class="settings-drawer">
+    <div class="info-body" style="padding: 0; display: flex; flex-direction: column; gap: 12px; width: 100%;">
+      <p style="margin: 0;">
+        本图表展示了每只股票相对于时间段起始收盘价的<strong>归一化百分比收益率</strong>（<code>+10%</code> 代表较期初上涨 10%，<code>-10%</code> 代表下跌 10%）。
+      </p>
+      <div class="legend-container" style="margin-top: 4px; padding: 10px; width: 100%;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; color: var(--foreground); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px;">收益幅度与颜色波段 / RETURN BANDS LEGEND</span>
+        <div id="diverging-legend" style="width: 100%; display: flex; justify-content: center;"></div>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: var(--muted-foreground);">
+        <strong>地平线波段叠置法 (Horizon Bands Overlaying)：</strong>
+        绝对值被划分为等高的波段并重叠堆铺。颜色越深代表波段越高（变化幅度更大）。绿色向上生长代表涨幅，红色自顶向下反悬挂代表跌幅。
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Scrollable Dashboard Content -->
+  <div id="dashboard-content">
+
+    <!-- Stats Row (mobile) -->
+    <div id="stats-grid">
+      <div id="stat-benchmark" class="stat-card">
+        <span class="stat-label">Benchmark return</span>
+        <div class="stat-val">—</div>
+        <div class="stat-meta">No benchmark selected</div>
+        <span class="trend-pill" style="display:none;"></span>
+      </div>
+      <div id="stat-gainer" class="stat-card">
+        <span class="stat-label">Top performer</span>
+        <div class="stat-val">—</div>
+        <div class="stat-meta">No watchlist data</div>
+        <span class="trend-pill pos" style="display:none;"></span>
+      </div>
+      <div id="stat-lagger" class="stat-card">
+        <span class="stat-label">Worst performer</span>
+        <div class="stat-val">—</div>
+        <div class="stat-meta">No watchlist data</div>
+        <span class="trend-pill neg" style="display:none;"></span>
+      </div>
+      <div id="stat-narrative" class="stat-card">
+        <span class="stat-label">Avg. return</span>
+        <div class="stat-val">—</div>
+        <div class="stat-meta">Watchlist average</div>
+        <span class="trend-pill" style="display:none;"></span>
+      </div>
+    </div>
+
+    <!-- Horizon chart -->
+    <div class="dashboard-card">
+      <div class="card-header">
+        <h3 class="card-title">
+          <i data-lucide="activity" style="width: 12px; height: 12px; color: var(--accent);"></i>
+          HORIZON OVERLAY
+        </h3>
+        <span style="font-size: 9px; color: var(--muted-foreground); letter-spacing: 0.06em;">DIVERGING · POS <span style="color:var(--pos)">▲</span> / NEG <span style="color:var(--neg)">▼</span></span>
+      </div>
+      <div id="chart-area">
+        <div id="loading">加载数据中…</div>
+        <svg id="ridgeline"></svg>
+      </div>
+    </div>
+
+  </div>
+
+  </div><!-- /#right-panel -->
+</main>
+
+<!-- Tooltip -->
+<div id="tooltip">
+  <!-- Header row: symbol + sector tag -->
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:1px;">
+    <span class="tt-sym"></span>
+    <span class="tt-sector"></span>
+  </div>
+  <div class="tt-date"></div>
+
+  <div class="tt-divider"></div>
+
+  <!-- Price + return row -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:7px;">
+    <div>
+      <div class="tt-metric-label">LAST PRICE</div>
+      <div class="tt-price tt-metric-val"></div>
+    </div>
+    <div>
+      <div class="tt-metric-label">RETURN</div>
+      <div class="tt-return tt-metric-val"></div>
+    </div>
+  </div>
+
+  <!-- Start / end prices -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:7px;">
+    <div>
+      <div class="tt-metric-label">START</div>
+      <div class="tt-start-price tt-metric-val-sm"></div>
+    </div>
+    <div>
+      <div class="tt-metric-label">END</div>
+      <div class="tt-end-price tt-metric-val-sm"></div>
+    </div>
+  </div>
+
+  <div class="tt-divider"></div>
+
+  <!-- Sparkline -->
+  <div class="tt-sparkline-label">PERIOD TREND</div>
+  <!-- Fixed logical size; JS draws at device resolution but never changes style width/height -->
+  <canvas id="tooltip-sparkline" style="display:block;width:162px;height:32px;"></canvas>
+</div>
+
+<script>
+const API = window.location.origin.startsWith("http") ? window.location.origin + "/api" : "http://localhost:5050/api";
+let watchlist = [];
+let priceData = [];
+let currentPeriod = "1d";
+let horizonBands = 3;
+let horizonSize  = 26;
+let currentScaleMode = "fib-ratios";
+let currentDomainMode = "global";
+
+// ── Diverging two-color schema (no hue encoding per stock) ──
+const posColor = "#18c96a";
+const negColor = "#e84040";
+
+// ── API helpers ──
+async function apiFetch(path, opts) {
+  const r = await fetch(API + path, opts);
+  return r.json();
+}
+
+async function loadWatchlist() {
+  watchlist = await apiFetch("/watchlist");
+}
+
+async function loadPrices() {
+  const symbols = Object.values(watchlist).flat();
+  if (!symbols.length) { 
+    priceData = []; 
+    renderChart(); 
+    renderStats();
+    return; 
+  }
+
+  const benchmarkTicker = getActiveBenchmark();
+  let fetchSymbols = [...symbols];
+  if (benchmarkTicker !== "none" && !fetchSymbols.includes(benchmarkTicker)) {
+    fetchSymbols.push(benchmarkTicker);
+  }
+
+  document.getElementById("loading").style.display = "flex";
+  const ridgeline = document.getElementById("ridgeline");
+  if (ridgeline) ridgeline.style.display = "none";
+
+  priceData = await apiFetch("/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod);
+
+  document.getElementById("loading").style.display = "none";
+  if (ridgeline) ridgeline.style.display = "";
+  renderChart();
+  renderStats();
+}
+
+// ── Delete stock event delegation ──
+document.getElementById("chart-area").addEventListener("click", async e => {
+  const btn = e.target.closest(".row-del-btn");
+  if (!btn) return;
+  const sym = btn.dataset.sym;
+  watchlist = await apiFetch("/watchlist/" + sym, { method: "DELETE" });
+  await loadPrices();
+});
+
+// ── Helpers: get active element value (desktop takes priority if visible) ──
+function getActiveBenchmark() {
+  const d = document.getElementById("benchmark-select-desktop");
+  const m = document.getElementById("benchmark-select");
+  if (d && d.offsetParent !== null) return d.value;
+  return m ? m.value : "none";
+}
+
+// ── Add ticker — works from both sidebar (desktop) and mobile form ──
+function bindAddForm(formId, inputId, sectorId, errId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const inp = document.getElementById(inputId);
+    const secSelect = document.getElementById(sectorId);
+    const errEl = document.getElementById(errId);
+    const sym = inp.value.trim().toUpperCase();
+    const sector = secSelect.value;
+    if (errEl) errEl.style.display = "none";
+    if (!sym) return;
+    inp.value = "";
+    const result = await apiFetch("/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol: sym, sector: sector })
+    });
+    if (result.error) {
+      const msg = result.error === "symbol required" ? "请输入股票代码" : result.error;
+      if (errEl) { errEl.textContent = msg; errEl.style.display = "block"; }
+      return;
+    }
+    watchlist = result;
+    await loadPrices();
+  });
+}
+bindAddForm("add-form", "add-input", "add-sector", "error-msg");
+bindAddForm("add-form-mobile", "add-input-mobile", "add-sector-mobile", "error-msg-mobile");
+
+// ── Benchmark selector (both mobile and desktop) ──
+["benchmark-select","benchmark-select-desktop"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("change", () => loadPrices());
+});
+
+// ── Scale selector ──
+["scale-mode-select","scale-mode-select-d"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("change", function() {
+    currentScaleMode = this.value;
+    // sync both
+    ["scale-mode-select","scale-mode-select-d"].forEach(sid => {
+      const s = document.getElementById(sid);
+      if (s && s !== this) s.value = this.value;
+    });
+    renderChart();
+  });
+});
+
+// ── Domain Range selector ──
+["domain-mode-select","domain-mode-select-d"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("change", function() {
+    currentDomainMode = this.value;
+    ["domain-mode-select","domain-mode-select-d"].forEach(sid => {
+      const s = document.getElementById(sid);
+      if (s && s !== this) s.value = this.value;
+    });
+    renderChart();
+  });
+});
+
+// ── Bands slider ──
+["bands-slider","bands-slider-d"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", function() {
+    horizonBands = +this.value;
+    ["bands-label","bands-label-d"].forEach(lid => {
+      const l = document.getElementById(lid); if (l) l.textContent = horizonBands;
+    });
+    ["bands-slider","bands-slider-d"].forEach(sid => {
+      const s = document.getElementById(sid); if (s && s !== this) s.value = horizonBands;
+    });
+    renderChart();
+  });
+});
+
+// ── Size slider ──
+["size-slider","size-slider-d"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", function() {
+    horizonSize = +this.value;
+    ["size-label","size-label-d"].forEach(lid => {
+      const l = document.getElementById(lid); if (l) l.textContent = horizonSize;
+    });
+    ["size-slider","size-slider-d"].forEach(sid => {
+      const s = document.getElementById(sid); if (s && s !== this) s.value = horizonSize;
+    });
+    renderChart();
+  });
+});
+
+// ── Period buttons ──
+document.querySelectorAll(".period-tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".period-tab").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentPeriod = btn.dataset.period;
+    loadPrices();
+  });
+});
+
+// Brown–Blue diverging scheme (4 bands each side, light→dark)
+const HORIZON_SCHEME = {
+  pos: ["#c6dbef","#6baed6","#2171b5","#084594"],  // blues
+  neg: ["#fcbba1","#fb6a4a","#cb181d","#67000d"],  // reds
+};
+
+
+// ── Market status badge — updates both mobile + desktop badges ──
+async function updateMarketStatus() {
+  try {
+    const status = await apiFetch("/market_status");
+    const text = status.open ? "LIVE " + status.time_et + " ET" : "CLOSED";
+    // Update all badge instances (desktop sidebar + mobile header)
+    document.querySelectorAll("#market-status-badge, #market-status-badge-mobile").forEach(badge => {
+      if (status.open) badge.classList.add("market-live");
+      else badge.classList.remove("market-live");
+    });
+    document.querySelectorAll(".market-badge-label").forEach(el => {
+      el.textContent = text;
+    });
+    return status.open;
+  } catch { return false; }
+}
+
+// ── Settings & Info drawer toggles (mobile) ──
+const settingsToggle = document.getElementById("settings-toggle-btn");
+const settingsDrawer = document.getElementById("settings-drawer");
+const infoToggle = document.getElementById("info-toggle-btn");
+const infoDrawer = document.getElementById("info-drawer");
+if (settingsToggle) {
+  settingsToggle.addEventListener("click", () => {
+    if(infoToggle) infoToggle.classList.remove("active");
+    if(infoDrawer) infoDrawer.classList.remove("expanded");
+    settingsToggle.classList.toggle("active");
+    if(settingsDrawer) settingsDrawer.classList.toggle("expanded");
+  });
+}
+if (infoToggle) {
+  infoToggle.addEventListener("click", () => {
+    if(settingsToggle) settingsToggle.classList.remove("active");
+    if(settingsDrawer) settingsDrawer.classList.remove("expanded");
+    infoToggle.classList.toggle("active");
+    if(infoDrawer) infoDrawer.classList.toggle("expanded");
+  });
+}
+// Mobile header duplicates
+["settings-toggle-btn-mobile","info-toggle-btn-mobile"].forEach(id => {
+  const btn = document.getElementById(id);
+  if (btn) {
+    btn.addEventListener("click", () => {
+      if (id.includes("settings") && settingsToggle) settingsToggle.click();
+      else if (id.includes("info") && infoToggle) infoToggle.click();
+    });
+  }
+});
+
+function getThresholds(scaleMode, bands, maxVal) {
+  if (scaleMode === "fib-ratios") {
+    let ratios = [0];
+    if (bands === 1) {
+      ratios = [0, 1];
+    } else if (bands === 2) {
+      ratios = [0, 0.618, 1];
+    } else if (bands === 3) {
+      ratios = [0, 0.382, 0.618, 1];
+    } else if (bands === 4) {
+      ratios = [0, 0.236, 0.382, 0.618, 1];
+    } else {
+      ratios = [0, 0.236, 0.382, 0.5, 0.618, 1];
+      while (ratios.length < bands + 1) {
+        ratios.splice(ratios.length - 1, 0, (ratios[ratios.length - 2] + 1) / 2);
+      }
+    }
+    return ratios.slice(0, bands + 1).map(r => r * maxVal);
+  } else if (scaleMode === "fib-steps") {
+    const fib = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377];
+    const steps = fib.slice(0, bands + 1);
+    const maxStep = steps[steps.length - 1];
+    return steps.map(s => (s / maxStep) * maxVal);
+  } else {
+    return d3.range(bands + 1).map(b => (b / bands) * maxVal);
+  }
+}
+
+// ── Stats Row Calculations ──
+function renderStats() {
+  const benchmarkTicker = getActiveBenchmark();
+  const bsel = document.getElementById("benchmark-select-desktop") || document.getElementById("benchmark-select");
+  const benchmarkName = bsel ? bsel.options[bsel.selectedIndex]?.text || "Benchmark" : "Benchmark";
+
+  // Helper: update a stat card by id
+  function fillCard(id, valText, metaText, pillCls, pillText) {
+    const card = document.getElementById(id);
+    if (!card) return;
+    card.querySelector(".stat-val").textContent = valText;
+    card.querySelector(".stat-meta").textContent = metaText;
+    const pill = card.querySelector(".trend-pill");
+    if (pill) {
+      if (pillText) { pill.style.display = "block"; pill.className = `trend-pill ${pillCls}`; pill.textContent = pillText; }
+      else pill.style.display = "none";
+    }
+  }
+  
+  // 1. Benchmark Return
+  if (benchmarkTicker === "none") {
+    fillCard("stat-benchmark",   "—", "No benchmark selected", "", null);
+    fillCard("stat-benchmark-d", "—", "No benchmark", "", null);
+  } else {
+    const benchEntry = priceData.find(d => d.symbol === benchmarkTicker);
+    if (benchEntry && benchEntry.prices && benchEntry.prices.length >= 2) {
+      const first = benchEntry.prices[0].close;
+      const last  = benchEntry.prices[benchEntry.prices.length - 1].close;
+      const pct   = ((last - first) / first * 100).toFixed(2);
+      const cls   = pct >= 0 ? "pos" : "neg";
+      const pill  = (pct >= 0 ? "▲" : "▼");
+      fillCard("stat-benchmark",   `${pct >= 0 ? "+" : ""}${pct}%`, benchmarkName, cls, pill);
+      fillCard("stat-benchmark-d", `${pct >= 0 ? "+" : ""}${pct}%`, benchmarkName, cls, pill);
+    }
+  }
+
+  // 2. Watchlist statistics
+  const wlSymbols = Object.values(watchlist).flat();
+  const activeEntries = priceData.filter(d => wlSymbols.includes(d.symbol) && d.prices && d.prices.length >= 2);
+
+  if (activeEntries.length === 0) {
+    fillCard("stat-gainer",    "—", "No watchlist data",  "", null);
+    fillCard("stat-lagger",    "—", "No watchlist data",  "", null);
+    fillCard("stat-narrative", "—", "Watchlist average",  "", null);
+    fillCard("stat-gainer-d",    "—", "", "", null);
+    fillCard("stat-lagger-d",    "—", "", "", null);
+    fillCard("stat-narrative-d", "—", "", "", null);
+    return;
+  }
+
+  const bPct = (() => {
+    if (benchmarkTicker === "none") return 0;
+    const be = priceData.find(d => d.symbol === benchmarkTicker);
+    if (!be || !be.prices || be.prices.length < 2) return 0;
+    return (be.prices[be.prices.length-1].close - be.prices[0].close) / be.prices[0].close * 100;
+  })();
+
+  const returns = activeEntries.map(entry => {
+    const first = entry.prices[0].close;
+    const last  = entry.prices[entry.prices.length - 1].close;
+    return { symbol: entry.symbol, pct: ((last - first) / first * 100) - bPct };
+  });
+  returns.sort((a, b) => b.pct - a.pct);
+
+  const top   = returns[0];
+  const worst = returns[returns.length - 1];
+  const avg   = returns.reduce((s, r) => s + r.pct, 0) / returns.length;
+  const prefix = benchmarkTicker !== "none" ? "excess " : "";
+
+  fillCard("stat-gainer",    top.symbol,   `${prefix}return ${top.pct >= 0 ? "+" : ""}${top.pct.toFixed(1)}%`,   "pos", `+${top.pct.toFixed(1)}%`);
+  fillCard("stat-lagger",    worst.symbol, `${prefix}return ${worst.pct >= 0 ? "+" : ""}${worst.pct.toFixed(1)}%`, "neg", `${worst.pct.toFixed(1)}%`);
+  fillCard("stat-narrative", `${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%`, benchmarkTicker !== "none" ? "Avg. excess return" : "Avg. watchlist return", avg >= 0 ? "pos" : "neg", avg >= 0 ? "▲" : "▼");
+
+  fillCard("stat-gainer-d",    top.symbol,   `+${top.pct.toFixed(1)}%`,   "pos", `+${top.pct.toFixed(1)}%`);
+  fillCard("stat-lagger-d",    worst.symbol, `${worst.pct.toFixed(1)}%`,  "neg", `${worst.pct.toFixed(1)}%`);
+  fillCard("stat-narrative-d", `${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%`, avg >= 0 ? "Avg ▲" : "Avg ▼", avg >= 0 ? "pos" : "neg", avg >= 0 ? "▲" : "▼");
+}
+
+// ── Sparkline Drawer ──
+// Canvas style size is fixed in HTML (162×32). We set the backing-store size
+// once to match device pixels — never rescale on repeated calls.
+const SPARK_W = 162, SPARK_H = 32;
+function drawSparkline(canvas, prices, color) {
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.round(SPARK_W * dpr);
+  const bh = Math.round(SPARK_H * dpr);
+
+  // Only resize the backing store if needed (avoids the accumulation bug)
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width  = bw;
+    canvas.height = bh;
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // reset + apply scale
+  ctx.clearRect(0, 0, SPARK_W, SPARK_H);
+
+  if (!prices || prices.length < 2) return;
+
+  const closes = prices.map(p => p.raw ?? p.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const pad = 3;
+
+  const px = (i) => (i / (prices.length - 1)) * SPARK_W;
+  const py = (v)  => SPARK_H - pad - ((v - min) / range) * (SPARK_H - pad * 2);
+
+  // Gradient fill
+  ctx.beginPath();
+  prices.forEach((p, i) => {
+    const x = px(i), y = py(closes[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(px(prices.length - 1), SPARK_H);
+  ctx.lineTo(0, SPARK_H);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, SPARK_H);
+  grad.addColorStop(0, d3.color(color).copy({ opacity: 0.18 }).toString());
+  grad.addColorStop(1, d3.color(color).copy({ opacity: 0 }).toString());
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap  = "round";
+  prices.forEach((p, i) => {
+    const x = px(i), y = py(closes[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+// ── D3 Horizon Chart ──
+const tooltip = document.getElementById("tooltip");
+
+function renderChart() {
+  const isDesktop = window.innerWidth >= 1024;
+  const container = document.getElementById("chart-area");
+
+  if (isDesktop) {
+    // Two-column layout: replace #ridgeline with a flex wrapper containing two SVGs
+    container.innerHTML = `<div id="loading" style="display:none"></div><div id="chart-cols" style="display:flex;gap:1px;width:100%;"></div>`;
+    renderChartInto("chart-cols", 0, 0.5);   // left half
+    renderChartInto("chart-cols", 0.5, 1.0); // right half
+    return;
+  }
+
+  // Mobile: single column, existing flow
+  const svgEl = document.getElementById("ridgeline");
+  svgEl.innerHTML = "";
+  renderChartInto(null, 0, 1.0, svgEl);
+}
+
+function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
+  const container = document.getElementById("chart-area");
+  let svgEl;
+  if (existingSvg) {
+    svgEl = existingSvg;
+  } else {
+    svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svgEl.style.flex = "1";
+    svgEl.style.minWidth = "0";
+    svgEl.style.display = "block";
+    document.getElementById(containerId).appendChild(svgEl);
+  }
+
+  const sectorOrder = [
+    "AI Models", "AI Apps",
+    "Chips Compute", "Chips Memory", "Chips Equipment",
+    "DC Infra", "Cloud",
+    "Nuclear", "Grid & Renewables", "Oil & Gas",
+    "Autonomy", "Defense",
+    "BioHealth", "Fintech", "Consumer"
+  ];
+  const sectorLabels = {
+    "AI Models":        "AI Models",
+    "AI Apps":          "AI Apps",
+    "Chips Compute":    "Chips · Compute",
+    "Chips Memory":     "Chips · Memory",
+    "Chips Equipment":  "Chips · Equipment",
+    "DC Infra":         "DC Infrastructure",
+    "Cloud":            "Cloud & CDN",
+    "Nuclear":          "Nuclear Power",
+    "Grid & Renewables":"Grid & Renewables",
+    "Oil & Gas":        "Oil & Gas",
+    "Autonomy":         "Autonomy & Robotics",
+    "Defense":          "Defense & Space",
+    "BioHealth":        "Biotech & Health AI",
+    "Fintech":          "Fintech & Payments",
+    "Consumer":         "Consumer & Media"
+  };
+
+  const pctReturn = entry => {
+    const p = entry.prices;
+    return (p[p.length - 1].close - p[0].close) / p[0].close;
+  };
+
+  const allGroupedData = [];
+  sectorOrder.forEach(sec => {
+    const symbols = watchlist[sec] || [];
+    const secPrices = [];
+    symbols.forEach(sym => {
+      const entry = priceData.find(d => d.symbol === sym && d.prices && d.prices.length > 1);
+      if (entry) secPrices.push(entry);
+    });
+    if (secPrices.length > 0) {
+      // Sort within sector: top performers first
+      secPrices.sort((a, b) => pctReturn(b) - pctReturn(a));
+      allGroupedData.push({ sector: sec, label: sectorLabels[sec], items: secPrices });
+    }
+  });
+
+  if (allGroupedData.length === 0) return;
+
+  // Slice sector groups by fraction for two-column layout
+  const sliceStart = Math.round(fracStart * allGroupedData.length);
+  const sliceEnd   = Math.round(fracEnd   * allGroupedData.length);
+  const groupedData = allGroupedData.slice(sliceStart, sliceEnd);
+  if (groupedData.length === 0) return;
+  const bands = horizonBands;
+  const size  = horizonSize;
+  const padding = 0.5;
+  const secHeaderHeight = 24;
+
+  const marginTop    = 18;
+  const marginRight  = 10;
+  const marginBottom = 10;
+  const marginLeft   = 170;
+  const colCount = (fracEnd - fracStart < 1.0) ? 2 : 1;
+  const width  = Math.max(300, Math.floor((container.clientWidth - (colCount > 1 ? 1 : 20)) / colCount));
+
+  const renderItems = [];
+  const sectorGroupsLayout = [];
+  let currentY = marginTop + 6;
+
+  groupedData.forEach(secGroup => {
+    const startY = currentY;
+    secGroup.items.forEach(entry => {
+      renderItems.push({
+        type: "row",
+        symbol: entry.symbol,
+        prices: entry.prices,
+        sector: secGroup.sector, // sector tracking
+        y: currentY,
+        height: size
+      });
+      currentY += size;
+    });
+    const endY = currentY;
+    sectorGroupsLayout.push({
+      sector: secGroup.sector,
+      label: secGroup.label,
+      startY: startY,
+      endY: endY
+    });
+  });
+
+  const height = currentY + marginBottom;
+
+  const benchmarkTicker = getActiveBenchmark();
+  let benchmarkPricesMap = new Map();
+
+  if (benchmarkTicker !== "none") {
+    const benchEntry = priceData.find(d => d.symbol === benchmarkTicker && d.prices && d.prices.length > 1);
+    if (benchEntry) {
+      const benchBase = benchEntry.prices[0].close;
+      benchEntry.prices.forEach(p => {
+        benchmarkPricesMap.set(p.date, (p.close - benchBase) / benchBase * 100);
+      });
+    }
+  }
+
+  // Update subtitle based on benchmark
+  const subEl = document.querySelector("#header .subtitle");
+  if (subEl) {
+    if (benchmarkTicker === "none") {
+      subEl.textContent = "% RETURN OVERLAY · HORIZON CHART";
+    } else {
+      const _bs = getActiveBenchmark ? document.getElementById("benchmark-select-d") || document.getElementById("benchmark-select") : null;
+      const benchName = (_bs && _bs.options[_bs.selectedIndex]) ? _bs.options[_bs.selectedIndex].text.toUpperCase() : benchmarkTicker.toUpperCase();
+      subEl.textContent = `EXCESS RETURN VS ${benchName} · HORIZON CHART`;
+    }
+  }
+
+  const flat = [];
+  groupedData.forEach(g => {
+    g.items.forEach(d => {
+      const base = d.prices[0].close;
+      d.prices.forEach(p => {
+        let val = (p.close - base) / base * 100;
+        if (benchmarkTicker !== "none") {
+          val -= (benchmarkPricesMap.get(p.date) || 0);
+        }
+        flat.push({
+          name:  d.symbol,
+          date:  new Date(p.date),
+          value: val,
+          raw:   p.close,
+        });
+      });
+    });
+  });
+
+  const pointsMap = new Map();
+  groupedData.forEach(g => {
+    g.items.forEach(d => {
+      const base = d.prices[0].close;
+      const pts = d.prices.map(p => {
+        let val = (p.close - base) / base * 100;
+        if (benchmarkTicker !== "none") {
+          val -= (benchmarkPricesMap.get(p.date) || 0);
+        }
+        return {
+          name:  d.symbol,
+          date:  new Date(p.date),
+          value: val,
+          raw:   p.close,
+        };
+      }).sort((a,b) => a.date - b.date);
+      pointsMap.set(d.symbol, pts);
+    });
+  });
+
+  const x = d3.scaleUtc()
+    .domain(d3.extent(flat, d => d.date))
+    .range([marginLeft, width - marginRight]);
+
+  const globalMax = d3.max(flat, d => Math.abs(d.value)) || 1;
+  const thresholds = getThresholds(currentScaleMode, bands, globalMax);
+
+  // Diverging Legend Ticks mapping
+  const legendDiv = document.getElementById("diverging-legend");
+  if (legendDiv) {
+    legendDiv.innerHTML = "";
+
+    const totalSegments = 2 * bands;
+    const wSvg = 600;
+    const hSvg = 45;
+    const margin = { left: 45, right: 45 };
+    const barWidth = wSvg - margin.left - margin.right;
+    const segWidth = barWidth / totalSegments;
+
+    const svg = d3.create("svg")
+      .attr("width", "100%")
+      .attr("height", hSvg)
+      .attr("viewBox", `0 0 ${wSvg} ${hSvg}`)
+      .style("overflow", "visible");
+
+    for (let i = 0; i < totalSegments; i++) {
+      let colorStyle;
+      if (i < bands) {
+        const b = bands - 1 - i;
+        const opacity = 0.15 + 0.85 * ((b + 1) / bands);
+        colorStyle = d3.color(negColor).copy({ opacity: opacity });
+      } else {
+        const b = i - bands;
+        const opacity = 0.15 + 0.85 * ((b + 1) / bands);
+        colorStyle = d3.color(posColor).copy({ opacity: opacity });
+      }
+
+      svg.append("rect")
+        .attr("x", margin.left + i * segWidth)
+        .attr("y", 6)
+        .attr("width", segWidth)
+        .attr("height", 12)
+        .attr("fill", colorStyle);
+      
+      if (i > 0) {
+        svg.append("line")
+          .attr("x1", margin.left + i * segWidth)
+          .attr("x2", margin.left + i * segWidth)
+          .attr("y1", 6)
+          .attr("y2", 18)
+          .attr("stroke", "var(--background)")
+          .attr("stroke-width", 1.5);
+      }
+    }
+
+    svg.append("rect")
+      .attr("x", margin.left)
+      .attr("y", 6)
+      .attr("width", barWidth)
+      .attr("height", 12)
+      .attr("fill", "none")
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1);
+
+    for (let k = 0; k <= totalSegments; k++) {
+      const xTick = margin.left + k * segWidth;
+      let val;
+      if (k < bands) {
+        val = -thresholds[bands - k];
+      } else if (k === bands) {
+        val = 0;
+      } else {
+        val = thresholds[k - bands];
+      }
+
+      svg.append("line")
+        .attr("x1", xTick)
+        .attr("x2", xTick)
+        .attr("y1", 18)
+        .attr("y2", 23)
+        .attr("stroke", "var(--border)")
+        .attr("stroke-width", 1);
+
+      let showLabel = false;
+      if (bands <= 4) {
+        showLabel = true;
+      } else if (bands <= 7) {
+        showLabel = (k % 2 === 0);
+      } else {
+        const mid = Math.round(bands / 2);
+        showLabel = (k === 0 || k === 2 * bands || k === bands || k === mid || k === bands + mid);
+      }
+
+      if (showLabel) {
+        let labelText = "";
+        if (val === 0) {
+          labelText = "0%";
+        } else {
+          if (currentDomainMode === "local") {
+            const ratio = Math.abs(val) / globalMax;
+            labelText = (val > 0 ? "+" : "-") + (ratio * 100).toFixed(0) + "% M";
+          } else {
+            labelText = (val > 0 ? "+" : "") + val.toFixed(1) + "%";
+          }
+        }
+
+        svg.append("text")
+          .attr("x", xTick)
+          .attr("y", 35)
+          .attr("text-anchor", "middle")
+          .attr("fill", "var(--muted-foreground)")
+          .style("font-size", "10px")
+          .style("font-family", "'JetBrains Mono', monospace")
+          .text(labelText);
+      }
+    }
+
+    legendDiv.appendChild(svg.node());
+  }
+
+  const uid = `hz-${Math.random().toString(16).slice(2)}`;
+
+  svgEl.setAttribute("width", width);
+  svgEl.setAttribute("height", height);
+  svgEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svgEl.style.maxWidth = "100%";
+  svgEl.style.height   = "auto";
+
+  const s = d3.select(svgEl);
+
+  // Global hairline guide
+  const hairline = s.append("line")
+    .attr("id", "hairline")
+    .attr("y1", marginTop)
+    .attr("y2", height - marginBottom)
+    .attr("stroke", "rgba(255, 61, 0, 0.45)")
+    .attr("stroke-width", 1)
+    .attr("stroke-dasharray", "3 3")
+    .style("pointer-events", "none")
+    .style("display", "none");
+
+  const getBandAreaPath = (vals, bandIdx, sign, rowThresholds) => {
+    const t0 = rowThresholds[bandIdx];
+    const t1 = rowThresholds[bandIdx + 1];
+    const bandHeight = t1 - t0;
+    if (bandHeight <= 0) return "";
+
+    const areaGen = d3.area()
+      .defined(d => !isNaN(d.value))
+      .x(d => x(d.date))
+      .curve(d3.curveBasis);
+
+    if (sign > 0) {
+      areaGen
+        .y0(size)
+        .y1(d => {
+          const val = Math.max(0, d.value);
+          const clamped = Math.min(t1, Math.max(t0, val)) - t0;
+          const h = (clamped / bandHeight) * (size - padding);
+          return size - h;
+        });
+    } else {
+      areaGen
+        .y0(0)
+        .y1(d => {
+          const val = Math.max(0, -d.value);
+          const clamped = Math.min(t1, Math.max(t0, val)) - t0;
+          const h = (clamped / bandHeight) * (size - padding);
+          return h;
+        });
+    }
+    return areaGen(vals);
+  };
+
+  const rowsData = renderItems.filter(d => d.type === "row");
+
+  // Draw sector grouping brackets and labels on the left
+  const groupG = s.append("g")
+    .selectAll("g")
+    .data(sectorGroupsLayout)
+    .join("g")
+      .attr("class", d => `bracket-group sector-${d.sector}`);
+
+  // Draw vertical line for the bracket
+  groupG.append("line")
+    .attr("x1", 15)
+    .attr("x2", 15)
+    .attr("y1", d => d.startY + 2)
+    .attr("y2", d => d.endY - 2)
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 1.5);
+
+  // Draw top hook of bracket
+  groupG.append("line")
+    .attr("x1", 15)
+    .attr("x2", 20)
+    .attr("y1", d => d.startY + 2)
+    .attr("y2", d => d.startY + 2)
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 1.5);
+
+  // Draw bottom hook of bracket
+  groupG.append("line")
+    .attr("x1", 15)
+    .attr("x2", 20)
+    .attr("y1", d => d.endY - 2)
+    .attr("y2", d => d.endY - 2)
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 1.5);
+
+  const iconMap = {
+    "AI Models":        "brain",
+    "AI Apps":          "sparkles",
+    "Chips Compute":    "cpu",
+    "Chips Memory":     "database",
+    "Chips Equipment":  "settings-2",
+    "DC Infra":         "server",
+    "Cloud":            "cloud",
+    "Nuclear":          "atom",
+    "Grid & Renewables":"zap",
+    "Oil & Gas":        "flame",
+    "Autonomy":         "bot",
+    "Defense":          "shield",
+    "BioHealth":        "heart-pulse",
+    "Fintech":          "landmark",
+    "Consumer":         "tv"
+  };
+
+  // Draw label using foreignObject to support Lucide icons!
+  groupG.append("foreignObject")
+    .attr("x", 24)
+    .attr("y", d => (d.startY + d.endY) / 2 - 8)
+    .attr("width", 16)
+    .attr("height", 16)
+    .html(d => `
+      <div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;">
+        <i data-lucide="${iconMap[d.sector]}" style="width: 13px; height: 13px; stroke-width: 2.2px; color: var(--muted-foreground);" title="${d.label}"></i>
+      </div>
+    `);
+
+  // Sector hover overlay rect and event handlers to highlight entire sector
+  groupG.append("rect")
+    .attr("x", 0)
+    .attr("y", d => d.startY)
+    .attr("width", 45)
+    .attr("height", d => d.endY - d.startY)
+    .attr("fill", "transparent")
+    .style("cursor", "pointer");
+
+  // Click-based highlight state for this SVG instance
+  let _selectedKey = null; // "sector:XYZ" | "row:SYM" | null
+
+  function clearHighlight() {
+    _selectedKey = null;
+    s.selectAll(".row-group, .bracket-group").style("opacity", "1");
+  }
+
+  groupG
+    .style("cursor", "pointer")
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      const key = `sector:${d.sector}`;
+      if (_selectedKey === key) { clearHighlight(); return; }
+      _selectedKey = key;
+      s.selectAll(".row-group").style("opacity", r => r.sector === d.sector ? "1" : "0.45");
+      s.selectAll(".bracket-group").style("opacity", b => b.sector === d.sector ? "1" : "0.45");
+    });
+
+  // Click on SVG background clears selection
+  s.on("click", function(event) {
+    if (event.target === this) clearHighlight();
+  });
+
+  const rowG = s.append("g")
+    .selectAll("g")
+    .data(rowsData)
+    .join("g")
+      .attr("transform", d => `translate(0,${d.y})`)
+      .attr("class", "row-group");
+
+  rowG
+    .style("cursor", "pointer")
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      const key = `row:${d.symbol}`;
+      if (_selectedKey === key) { clearHighlight(); return; }
+      _selectedKey = key;
+      s.selectAll(".row-group").style("opacity", r => r.symbol === d.symbol ? "1" : "0.45");
+      s.selectAll(".bracket-group").style("opacity", b => b.sector === d.sector ? "1" : "0.45");
+    });
+
+  rowG.each(function(rowData, rowIdx) {
+    const rowSelection = d3.select(this);
+
+    const defs = rowSelection.append("defs");
+    defs.append("clipPath")
+        .attr("id", `${uid}-clip-${rowIdx}`)
+      .append("rect")
+        .attr("x", marginLeft)
+        .attr("y", padding)
+        .attr("width", width - marginLeft - marginRight)
+        .attr("height", size - padding);
+  });
+
+  rowG.each(function(rowData, rowIdx) {
+    const rowSelection = d3.select(this);
+    const pts = pointsMap.get(rowData.symbol) || [];
+
+    // Local vs Global domain y-bounds logic
+    let rowThresholds;
+    if (currentDomainMode === "local") {
+      const localMax = d3.max(pts, d => Math.abs(d.value)) || 1;
+      rowThresholds = getThresholds(currentScaleMode, bands, localMax);
+    } else {
+      rowThresholds = thresholds;
+    }
+
+    rowSelection.selectAll(".pos-band")
+      .data(d3.range(bands).map(b => ({ band: b, vals: pts })))
+      .join("path")
+        .attr("class", "pos-band")
+        .attr("d", d => getBandAreaPath(d.vals, d.band, 1, rowThresholds))
+        .attr("fill", d => {
+          const t = (d.band + 1) / bands;
+          return d3.color(posColor).copy({ opacity: 0.15 + 0.85 * t });
+        })
+        .attr("clip-path", `url(#${uid}-clip-${rowIdx})`);
+
+    rowSelection.selectAll(".neg-band")
+      .data(d3.range(bands).map(b => ({ band: b, vals: pts })))
+      .join("path")
+        .attr("class", "neg-band")
+        .attr("d", d => getBandAreaPath(d.vals, d.band, -1, rowThresholds))
+        .attr("fill", d => {
+          const t = (d.band + 1) / bands;
+          return d3.color(negColor).copy({ opacity: 0.15 + 0.85 * t });
+        })
+        .attr("clip-path", `url(#${uid}-clip-${rowIdx})`);
+
+    const first = pts[0].raw;
+    const last = pts[pts.length - 1].raw;
+    const pctVal = ((last - first) / first * 100);
+    let displayPct = pctVal;
+    if (benchmarkTicker !== "none") {
+      const benchEntry = priceData.find(d => d.symbol === benchmarkTicker);
+      if (benchEntry && benchEntry.prices && benchEntry.prices.length >= 2) {
+        const bFirst = benchEntry.prices[0].close;
+        const bLast = benchEntry.prices[benchEntry.prices.length - 1].close;
+        const bPct = ((bLast - bFirst) / bFirst * 100);
+        displayPct -= bPct;
+      }
+    }
+    const colorCls = displayPct >= 0 ? "pos" : "neg";
+    const pctSign = displayPct >= 0 ? "+" : "";
+
+    rowSelection.append("foreignObject")
+      .attr("x", 46)
+      .attr("y", Math.max(0, (size - 16) / 2))
+      .attr("width", 116)
+      .attr("height", 16)
+      .html(`
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;height:100%;box-sizing:border-box;overflow:hidden;">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#e8e8e8;letter-spacing:0.04em;white-space:nowrap;">${rowData.symbol}</span>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${colorCls === 'pos' ? posColor : negColor};white-space:nowrap;">${pctSign}${displayPct.toFixed(1)}%</span>
+            <button class="row-del-btn" data-sym="${rowData.symbol}" title="Remove" style="background:none;border:none;color:#555;cursor:pointer;padding:1px;display:inline-flex;align-items:center;justify-content:center;">
+              <i data-lucide="x" style="width:10px;height:10px;stroke-width:2.5;"></i>
+            </button>
+          </div>
+        </div>
+      `);
+
+    rowSelection.append("line")
+      .attr("x1", marginLeft).attr("x2", width - marginRight)
+      .attr("y1", size - 0.5).attr("y2", size - 0.5)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1);
+
+    rowSelection.append("rect")
+      .attr("x", marginLeft)
+      .attr("y", 0)
+      .attr("width", width - marginLeft - marginRight)
+      .attr("height", size)
+      .attr("fill", "transparent")
+      .style("cursor", "crosshair")
+      .on("mousemove", function(event) {
+        const [rawMx] = d3.pointer(event, svgEl);
+        const mx = Math.max(marginLeft, Math.min(width - marginRight, rawMx));
+        
+        // Update hairline guide
+        hairline.style("display", null)
+          .attr("x1", mx)
+          .attr("x2", mx);
+
+        const hoverDate = x.invert(mx);
+        let best = pts[0], bestDist = Infinity;
+        pts.forEach(v => {
+          const dist = Math.abs(v.date - hoverDate);
+          if (dist < bestDist) { bestDist = dist; best = v; }
+        });
+        const color = best.value >= 0 ? posColor : negColor;
+        
+        tooltip.style.opacity = "1";
+        tooltip.style.left = (event.clientX + 14) + "px";
+        tooltip.style.top  = (event.clientY - 60) + "px"; // adjusted tooltip top offset to fit taller content
+        
+        // Sector labels mapping
+        const sectorNames = {
+          "AI Models":        "AI Models",
+          "AI Apps":          "AI Apps",
+          "Chips Compute":    "Chips · Compute",
+          "Chips Memory":     "Chips · Memory",
+          "Chips Equipment":  "Chips · Equipment",
+          "DC Infra":         "DC Infra",
+          "Cloud":            "Cloud & CDN",
+          "Nuclear":          "Nuclear",
+          "Grid & Renewables":"Grid & Renewables",
+          "Oil & Gas":        "Oil & Gas",
+          "Autonomy":         "Autonomy",
+          "Defense":          "Defense",
+          "BioHealth":        "BioHealth",
+          "Fintech":          "Fintech",
+          "Consumer":         "Consumer"
+        };
+        
+        tooltip.querySelector(".tt-sym").textContent  = rowData.symbol;
+        tooltip.querySelector(".tt-sym").style.color  = color;
+        tooltip.querySelector(".tt-sector").textContent = sectorNames[rowData.sector] || rowData.sector;
+        tooltip.querySelector(".tt-date").textContent = best.date.toISOString().slice(0,10);
+        
+        // Populate start, end prices
+        const startPrice = pts[0].raw;
+        const endPrice = pts[pts.length - 1].raw;
+        tooltip.querySelector(".tt-start-price").textContent = "$" + startPrice.toFixed(2);
+        tooltip.querySelector(".tt-end-price").textContent = "$" + endPrice.toFixed(2);
+
+        // Populate current price and return
+        tooltip.querySelector(".tt-price").textContent = "$" + best.raw.toFixed(2);
+        tooltip.querySelector(".tt-price").style.color = color;
+        
+        const prefix = benchmarkTicker !== "none" ? "XS " : "";
+        tooltip.querySelector(".tt-return").textContent = prefix + (best.value >= 0 ? "+" : "") + best.value.toFixed(2) + "%";
+        tooltip.querySelector(".tt-return").style.color = color;
+
+        // Draw sparkline inside tooltip dynamically
+        const canvas = document.getElementById("tooltip-sparkline");
+        if (canvas) {
+          const firstPrice = pts[0].raw;
+          const lastPrice = pts[pts.length - 1].raw;
+          const overallReturn = lastPrice - firstPrice;
+          const sparkColor = overallReturn >= 0 ? posColor : negColor;
+          drawSparkline(canvas, pts, sparkColor);
+        }
+      })
+      .on("mouseleave", () => { 
+        tooltip.style.opacity = "0"; 
+        hairline.style("display", "none");
+      });
+  });
+
+  // Period-aware tick interval and format
+  let tickInterval, tickFormat;
+  if (currentPeriod === "1d") {
+    tickInterval = d3.timeHour.every(1);
+    tickFormat   = d3.timeFormat("%-I%p");
+  } else if (currentPeriod === "5d") {
+    tickInterval = d3.timeHour.every(4);
+    tickFormat   = d3.timeFormat("%a %-I%p");
+  } else if (currentPeriod === "1mo") {
+    tickInterval = d3.timeDay.every(3);
+    tickFormat   = d3.timeFormat("%b %d");
+  } else if (currentPeriod === "3mo") {
+    tickInterval = d3.timeWeek.every(1);
+    tickFormat   = d3.timeFormat("%b %d");
+  } else if (currentPeriod === "6mo") {
+    tickInterval = d3.timeMonth.every(1);
+    tickFormat   = d3.timeFormat("%b '%y");
+  } else {
+    tickInterval = d3.timeMonth.every(3);
+    tickFormat   = d3.timeFormat("%b '%y");
+  }
+
+  s.append("g")
+    .attr("transform", `translate(0,${marginTop})`)
+    .attr("class", "x-axis-shared")
+    .call(
+      d3.axisTop(x)
+        .ticks(tickInterval)
+        .tickFormat(tickFormat)
+        .tickSizeOuter(0)
+    )
+    .call(ax => ax.selectAll(".tick")
+      .filter(d => x(d) < marginLeft || x(d) >= width - marginRight)
+      .remove()
+    )
+    .call(ax => ax.select(".domain").remove());
+
+  // Initialize/re-initialize Lucide Icons (e.g. for the foreignObject icons)
+  lucide.createIcons();
+}
+
+// ── Desktop layout activation ──
+function applyDesktopLayout() {
+  const isDesktop = window.innerWidth >= 1024;
+  const sidebar = document.getElementById("sidebar");
+  const sidebarHeader = document.getElementById("sidebar-header");
+  const rightPanel = document.getElementById("right-panel");
+
+  if (isDesktop) {
+    sidebar.style.display = "flex";
+    sidebarHeader.style.display = "flex";
+    // right-panel needs block flow (not contents) on desktop
+    rightPanel.style.display = "flex";
+    rightPanel.style.flexDirection = "column";
+    rightPanel.style.flex = "1";
+    rightPanel.style.minWidth = "0";
+    rightPanel.style.height = "100vh";
+    rightPanel.style.overflow = "hidden";
+  } else {
+    sidebar.style.display = "none";
+    sidebarHeader.style.display = "none";
+    rightPanel.style.display = "contents";
+  }
+}
+
+window.addEventListener("resize", () => {
+  applyDesktopLayout();
+  renderChart();
+});
+
+// ── Init ──
+(async () => {
+  applyDesktopLayout();
+  await loadWatchlist();
+  await loadPrices();
+  lucide.createIcons();
+  updateMarketStatus();
+})();
+</script>
+</body>
+</html>
