@@ -17,6 +17,10 @@ export default defineConfig({
       srcDirectory: 'src',
     }),
     viteReact(),
-    nitro(),
+    nitro({
+      rollupConfig: {
+        external: ['yahoo-finance2'],
+      },
+    }),
   ],
 })
