@@ -408,6 +408,14 @@
     cursor: grabbing;
   }
 
+  .bracket-group.group-dragging {
+    opacity: 0.5;
+  }
+
+  .chart-drop-marker {
+    filter: drop-shadow(0 0 4px rgba(255, 170, 0, 0.35));
+  }
+
   /* Ranges */
   .premium-slider {
     -webkit-appearance: none;

@@ -20,6 +20,8 @@ const SECTOR_ORDER = [
   "BioHealth", "Fintech", "Consumer"
 ];
 
+const SECTOR_ORDER_STORAGE_KEY = "stocks.sectorOrder.v2";
+
 const SECTOR_LABELS = {
   "AI Models":        "AI Models",
   "AI Apps":          "AI Apps",
@@ -63,6 +65,21 @@ const DEFAULT_QUADRANT_MAP = {
   "Consumer": "q2",
 };
 
+function normalizeSectorOrder(order) {
+  const valid = new Set(SECTOR_ORDER);
+  const ordered = (Array.isArray(order) ? order : []).filter(sec => valid.has(sec));
+  const missing = SECTOR_ORDER.filter(sec => !ordered.includes(sec));
+  return [...ordered, ...missing];
+}
+
+function loadSectorOrder() {
+  try {
+    return normalizeSectorOrder(JSON.parse(localStorage.getItem(SECTOR_ORDER_STORAGE_KEY) || "[]"));
+  } catch {
+    return [...SECTOR_ORDER];
+  }
+}
+
 function loadQuadrantMap() {
   try {
     return { ...DEFAULT_QUADRANT_MAP, ...JSON.parse(localStorage.getItem("stocks.quadrantMap") || "{}") };
@@ -71,8 +88,26 @@ function loadQuadrantMap() {
   }
 }
 
+let currentSectorOrder = loadSectorOrder();
 let quadrantMap = loadQuadrantMap();
 let quadrantPointerDrag = null;
+let chartGroupDrag = null;
+let suppressGroupClickUntil = 0;
+
+function saveSectorOrder(order) {
+  currentSectorOrder = normalizeSectorOrder(order);
+  localStorage.setItem(SECTOR_ORDER_STORAGE_KEY, JSON.stringify(currentSectorOrder));
+}
+
+function moveSectorBeforeOrAfter(sourceSector, targetSector, insertAfter) {
+  if (!sourceSector || !targetSector || sourceSector === targetSector) return false;
+  const order = currentSectorOrder.filter(sec => sec !== sourceSector);
+  const targetIndex = order.indexOf(targetSector);
+  if (targetIndex === -1) return false;
+  order.splice(targetIndex + (insertAfter ? 1 : 0), 0, sourceSector);
+  saveSectorOrder(order);
+  return true;
+}
 
 function pctReturn(entry) {
   const p = entry?.prices || [];
@@ -94,7 +129,7 @@ function sortEntries(entries) {
 
 function getWatchlistEntriesBySector() {
   const bySector = new Map();
-  SECTOR_ORDER.forEach(sec => {
+  currentSectorOrder.forEach(sec => {
     const entries = (watchlist[sec] || [])
       .map(sym => {
         const entry = priceData.find(d => d.symbol === sym && d.prices && d.prices.length > 1);
@@ -133,7 +168,7 @@ function buildGroupedData() {
 
   if (currentLayoutMode === "quadrant") {
     return QUADRANTS.map(q => {
-      const items = SECTOR_ORDER
+      const items = currentSectorOrder
         .filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id)
         .flatMap(sec => bySector.get(sec) || []);
       return {
@@ -147,7 +182,7 @@ function buildGroupedData() {
     }).filter(g => g.items.length > 0);
   }
 
-  return SECTOR_ORDER.map(sec => {
+  return currentSectorOrder.map(sec => {
     const entries = bySector.get(sec) || [];
     return {
       key: sec,
@@ -163,7 +198,7 @@ function renderQuadrantBoard() {
   if (!board) return;
 
   board.innerHTML = QUADRANTS.map(q => {
-    const sectors = SECTOR_ORDER.filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id);
+    const sectors = currentSectorOrder.filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id);
     const chips = sectors.map(sec => `
       <button type="button" class="sector-chip" draggable="true" data-sector="${sec}" title="${SECTOR_LABELS[sec] || sec}">
         ${sec.replace("Chips ", "").replace("Grid & Renewables", "Grid")}
@@ -247,6 +282,79 @@ function renderQuadrantBoard() {
       renderChart();
     });
   });
+}
+
+function clearChartDropMarkers() {
+  document.querySelectorAll(".chart-drop-marker").forEach(marker => marker.remove());
+}
+
+function getChartGroupDropTarget(clientX, clientY, draggedKey) {
+  const svgs = Array.from(document.querySelectorAll("#chart-area svg"));
+  if (svgs.length === 0) return null;
+
+  const svgWithDistance = svgs.map(svg => {
+    const rect = svg.getBoundingClientRect();
+    const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+    return { svg, rect, distance: dx };
+  }).sort((a, b) => a.distance - b.distance)[0];
+
+  const groups = Array.from(svgWithDistance.svg.querySelectorAll('.bracket-group[data-group-kind="sector"]'))
+    .map(el => {
+      const rect = el.getBoundingClientRect();
+      return {
+        el,
+        key: el.dataset.groupKey,
+        rect,
+        centerY: rect.top + rect.height / 2,
+      };
+    })
+    .filter(group => group.key && group.key !== draggedKey && group.rect.height > 0)
+    .sort((a, b) => a.centerY - b.centerY);
+
+  if (groups.length === 0) return null;
+
+  let target = groups[0];
+  let insertAfter = false;
+
+  if (clientY <= groups[0].centerY) {
+    target = groups[0];
+    insertAfter = false;
+  } else if (clientY >= groups[groups.length - 1].centerY) {
+    target = groups[groups.length - 1];
+    insertAfter = true;
+  } else {
+    target = groups.reduce((best, group) => {
+      const distance = Math.abs(group.centerY - clientY);
+      return distance < best.distance ? { group, distance } : best;
+    }, { group: groups[0], distance: Math.abs(groups[0].centerY - clientY) }).group;
+    insertAfter = clientY > target.centerY;
+  }
+
+  return { ...target, svg: svgWithDistance.svg, insertAfter };
+}
+
+function showChartDropMarker(target) {
+  clearChartDropMarkers();
+  if (!target) return;
+
+  const svg = target.svg;
+  const svgRect = svg.getBoundingClientRect();
+  const viewBox = svg.viewBox.baseVal;
+  const scaleY = viewBox.height / Math.max(1, svgRect.height);
+  const yPx = (target.insertAfter ? target.rect.bottom : target.rect.top) - svgRect.top;
+  const y = Math.max(0, Math.min(viewBox.height, yPx * scaleY));
+
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  marker.classList.add("chart-drop-marker");
+  marker.setAttribute("x1", "8");
+  marker.setAttribute("x2", "160");
+  marker.setAttribute("y1", String(y));
+  marker.setAttribute("y2", String(y));
+  marker.setAttribute("stroke", "var(--accent)");
+  marker.setAttribute("stroke-width", "1.5");
+  marker.setAttribute("stroke-dasharray", "2 2");
+  marker.setAttribute("pointer-events", "none");
+  svg.appendChild(marker);
 }
 
 // ── Diverging two-color schema (no hue encoding per stock) ──
@@ -1041,7 +1149,9 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .selectAll("g")
     .data(sectorGroupsLayout)
     .join("g")
-      .attr("class", d => `bracket-group group-${String(d.key).replace(/\W+/g, "-")}`);
+      .attr("class", d => `bracket-group group-${String(d.key).replace(/\W+/g, "-")}`)
+      .attr("data-group-key", d => d.key)
+      .attr("data-group-kind", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "sector" : "computed");
 
   // Draw vertical line for the bracket
   groupG.append("line")
@@ -1107,7 +1217,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .attr("width", 45)
     .attr("height", d => d.endY - d.startY)
     .attr("fill", "transparent")
-    .style("cursor", "pointer");
+    .style("cursor", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "grab" : "pointer");
 
   // Click-based highlight state for this SVG instance
   let _selectedKey = null; // "sector:XYZ" | "row:SYM" | null
@@ -1118,8 +1228,59 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
   }
 
   groupG
-    .style("cursor", "pointer")
+    .style("cursor", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "grab" : "pointer")
+    .on("pointerdown", function(event, d) {
+      if (currentLayoutMode !== "sector" || !SECTOR_ORDER.includes(d.key) || event.button !== 0) return;
+      event.stopPropagation();
+
+      const groupNode = this;
+      const pointerId = event.pointerId;
+      chartGroupDrag = {
+        key: d.key,
+        pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+      groupNode.classList.add("group-dragging");
+      svgEl.setPointerCapture?.(pointerId);
+
+      const handleMove = moveEvent => {
+        if (!chartGroupDrag || chartGroupDrag.pointerId !== pointerId) return;
+        const dx = moveEvent.clientX - chartGroupDrag.startX;
+        const dy = moveEvent.clientY - chartGroupDrag.startY;
+        if (Math.hypot(dx, dy) > 5) chartGroupDrag.moved = true;
+        if (!chartGroupDrag.moved) return;
+        const target = getChartGroupDropTarget(moveEvent.clientX, moveEvent.clientY, chartGroupDrag.key);
+        showChartDropMarker(target);
+      };
+
+      const handleUp = upEvent => {
+        document.removeEventListener("pointermove", handleMove);
+        document.removeEventListener("pointerup", handleUp);
+        groupNode.classList.remove("group-dragging");
+        svgEl.releasePointerCapture?.(pointerId);
+        const drag = chartGroupDrag;
+        chartGroupDrag = null;
+        clearChartDropMarkers();
+        if (!drag || !drag.moved) return;
+
+        suppressGroupClickUntil = Date.now() + 250;
+        const target = getChartGroupDropTarget(upEvent.clientX, upEvent.clientY, drag.key);
+        if (target && moveSectorBeforeOrAfter(drag.key, target.key, target.insertAfter)) {
+          renderQuadrantBoard();
+          renderChart();
+        }
+      };
+
+      document.addEventListener("pointermove", handleMove);
+      document.addEventListener("pointerup", handleUp);
+    })
     .on("click", function(event, d) {
+      if (Date.now() < suppressGroupClickUntil) {
+        event.stopPropagation();
+        return;
+      }
       event.stopPropagation();
       const key = `group:${d.key}`;
       if (_selectedKey === key) { clearHighlight(); return; }
