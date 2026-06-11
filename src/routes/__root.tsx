@@ -27,7 +27,7 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
-      { rel: 'stylesheet', href: '/legacy.css' },
+      { rel: 'stylesheet', href: '/stock-dashboard.css' },
       {
         rel: 'preconnect',
         href: 'https://fonts.googleapis.com',
