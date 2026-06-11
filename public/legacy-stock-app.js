@@ -90,7 +90,6 @@ function loadQuadrantMap() {
 
 let currentSectorOrder = loadSectorOrder();
 let quadrantMap = loadQuadrantMap();
-let quadrantPointerDrag = null;
 let chartGroupDrag = null;
 let suppressGroupClickUntil = 0;
 
@@ -191,97 +190,6 @@ function buildGroupedData() {
       items: sortEntries(entries),
     };
   }).filter(g => g.items.length > 0);
-}
-
-function renderQuadrantBoard() {
-  const board = document.getElementById("quadrant-board");
-  if (!board) return;
-
-  board.innerHTML = QUADRANTS.map(q => {
-    const sectors = currentSectorOrder.filter(sec => (quadrantMap[sec] || DEFAULT_QUADRANT_MAP[sec]) === q.id);
-    const chips = sectors.map(sec => `
-      <button type="button" class="sector-chip" draggable="true" data-sector="${sec}" title="${SECTOR_LABELS[sec] || sec}">
-        ${sec.replace("Chips ", "").replace("Grid & Renewables", "Grid")}
-      </button>
-    `).join("");
-    return `
-      <div class="quadrant-zone" data-quadrant="${q.id}">
-        <div class="quadrant-title">
-          <span>${q.label}</span>
-          <span class="quadrant-subtitle">${sectors.length}</span>
-        </div>
-        <div class="quadrant-subtitle">${q.subtitle}</div>
-        <div class="sector-chip-list">${chips}</div>
-      </div>
-    `;
-  }).join("");
-
-  board.querySelectorAll(".sector-chip").forEach(chip => {
-    chip.addEventListener("dragstart", event => {
-      event.dataTransfer.setData("text/plain", chip.dataset.sector);
-      event.dataTransfer.effectAllowed = "move";
-    });
-    chip.addEventListener("pointerdown", event => {
-      if (event.button !== 0) return;
-      quadrantPointerDrag = {
-        sector: chip.dataset.sector,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        moved: false,
-      };
-      chip.setPointerCapture?.(event.pointerId);
-    });
-    chip.addEventListener("pointermove", event => {
-      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
-      const dx = event.clientX - quadrantPointerDrag.startX;
-      const dy = event.clientY - quadrantPointerDrag.startY;
-      if (Math.hypot(dx, dy) > 5) {
-        quadrantPointerDrag.moved = true;
-        chip.classList.add("dragging");
-      }
-    });
-    chip.addEventListener("pointerup", event => {
-      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
-      const drag = quadrantPointerDrag;
-      quadrantPointerDrag = null;
-      chip.classList.remove("dragging");
-      chip.releasePointerCapture?.(event.pointerId);
-      if (!drag.moved) return;
-      const targetZone = document.elementFromPoint(event.clientX, event.clientY)?.closest(".quadrant-zone");
-      const quadrant = targetZone?.dataset.quadrant;
-      if (!drag.sector || !quadrant) return;
-      quadrantMap = { ...quadrantMap, [drag.sector]: quadrant };
-      localStorage.setItem("stocks.quadrantMap", JSON.stringify(quadrantMap));
-      renderQuadrantBoard();
-      renderChart();
-    });
-    chip.addEventListener("pointercancel", event => {
-      if (!quadrantPointerDrag || quadrantPointerDrag.pointerId !== event.pointerId) return;
-      quadrantPointerDrag = null;
-      chip.classList.remove("dragging");
-    });
-  });
-
-  board.querySelectorAll(".quadrant-zone").forEach(zone => {
-    zone.addEventListener("dragover", event => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      zone.classList.add("drag-over");
-    });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-    zone.addEventListener("drop", event => {
-      event.preventDefault();
-      zone.classList.remove("drag-over");
-      const sector = event.dataTransfer.getData("text/plain");
-      const quadrant = zone.dataset.quadrant;
-      if (!sector || !quadrant) return;
-      quadrantMap = { ...quadrantMap, [sector]: quadrant };
-      localStorage.setItem("stocks.quadrantMap", JSON.stringify(quadrantMap));
-      renderQuadrantBoard();
-      renderChart();
-    });
-  });
 }
 
 function clearChartDropMarkers() {
@@ -1286,7 +1194,6 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         suppressGroupClickUntil = Date.now() + 250;
         const target = getChartGroupDropTarget(upEvent.clientX, upEvent.clientY, drag.key);
         if (target && moveSectorBeforeOrAfter(drag.key, target.key, target.insertAfter)) {
-          renderQuadrantBoard();
           renderChart();
         }
       };
@@ -1609,7 +1516,6 @@ window.addEventListener("resize", () => {
 // ── Init ──
 (async () => {
   applyDesktopLayout();
-  renderQuadrantBoard();
   await loadWatchlist();
   await loadPrices();
   lucide.createIcons();
