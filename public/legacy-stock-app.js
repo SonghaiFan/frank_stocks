@@ -613,7 +613,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     });
   });
 
-  const compressIntradayAxis = ["1d", "5d", "1mo", "3mo"].includes(currentPeriod);
+  const compressIntradayAxis = ["1d", "5d", "1mo", "3mo", "6mo", "1y"].includes(currentPeriod);
   const sortedTimestamps = Array.from(new Set(flat.map(d => +d.date))).sort((a, b) => a - b);
   const timestampIndex = new Map(sortedTimestamps.map((ts, idx) => [ts, idx]));
   const xTime = d3.scaleUtc()
@@ -1142,7 +1142,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
           lastDay = day;
         }
       });
-      const targetTickCount = currentPeriod === "1mo" ? 6 : 8;
+      const targetTickCount = currentPeriod === "1mo" ? 6 : currentPeriod === "1y" ? 10 : 8;
       const step = Math.max(1, Math.ceil(firstIndexByDay.length / targetTickCount));
       tickIndexes = firstIndexByDay.filter((_, idx) => idx % step === 0);
       const lastIndex = firstIndexByDay[firstIndexByDay.length - 1];

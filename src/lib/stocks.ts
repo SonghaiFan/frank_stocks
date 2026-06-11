@@ -49,7 +49,7 @@ const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
 const yahooFinance = new YahooFinance()
-const priceCacheVersion = 'v3'
+const priceCacheVersion = 'v4'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
 const quoteCache = new Map<string, CacheEnvelope<Quote>>()
@@ -222,6 +222,10 @@ export function getInterval(period: string) {
   if (period === '5d') return '5m'
   if (period === '1mo') return '30m'
   if (period === '3mo') return '1h'
+  if (period === '6mo') return '1h'
+  if (period === '1y') return '1h'
+  if (period === '5y') return '1wk'
+  if (period === 'max') return '1mo'
   return '1d'
 }
 
@@ -294,8 +298,36 @@ function periodStart(period: string) {
   return start
 }
 
+function targetBars(period: string) {
+  if (period === '5y') return 300
+  if (period === 'max') return 320
+  return 320
+}
+
+function resamplePrices(prices: PriceBar[], target: number) {
+  if (prices.length <= target) return prices
+  if (target < 2) return prices.slice(0, target)
+
+  const sampled: PriceBar[] = []
+  const seen = new Set<number>()
+
+  for (let i = 0; i < target; i++) {
+    const index = Math.round((i * (prices.length - 1)) / (target - 1))
+    if (!seen.has(index)) {
+      sampled.push(prices[index])
+      seen.add(index)
+    }
+  }
+
+  return sampled
+}
+
 function toDateKey(date: Date) {
   return etFormatter.format(date)
+}
+
+function isIntradayInterval(interval: string) {
+  return ['1m', '2m', '5m', '15m', '30m', '60m', '90m', '1h'].includes(interval)
 }
 
 function isRegularTradingBar(date: Date) {
@@ -353,7 +385,7 @@ export async function getPricesFromQuery(url: string) {
         let filteredQuotes = quotes
           .filter((quote) => typeof quote.close === 'number' && quote.date instanceof Date)
           .filter((quote) => period !== '1d' || toDateKey(quote.date) === today)
-          .filter((quote) => interval === '1d' || isRegularTradingBar(quote.date))
+          .filter((quote) => !isIntradayInterval(interval) || isRegularTradingBar(quote.date))
 
         if (period === '5d') {
           const tradingDays = Array.from(new Set(filteredQuotes.map((quote) => toDateKey(quote.date)))).slice(-5)
@@ -361,12 +393,12 @@ export async function getPricesFromQuery(url: string) {
           filteredQuotes = filteredQuotes.filter((quote) => tradingDaySet.has(toDateKey(quote.date)))
         }
 
-        const prices = filteredQuotes
+        const prices = resamplePrices(filteredQuotes
           .map((quote) => ({
-            date: interval === '1d' ? toDateKey(quote.date) : quote.date.toISOString(),
+            date: isIntradayInterval(interval) ? quote.date.toISOString() : toDateKey(quote.date),
             close: roundPrice(quote.close as number),
-            ...(interval === '1d' ? {} : { ts: quote.date.getTime() }),
-          }))
+            ...(isIntradayInterval(interval) ? { ts: quote.date.getTime() } : {}),
+          })), targetBars(period))
 
         setMemoryPrices(cacheKey, period, prices)
         if (cacheable && diskCache) {
