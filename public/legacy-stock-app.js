@@ -1231,7 +1231,10 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     .style("cursor", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "grab" : "pointer")
     .on("pointerdown", function(event, d) {
       if (currentLayoutMode !== "sector" || !SECTOR_ORDER.includes(d.key) || event.button !== 0) return;
+      event.preventDefault();
       event.stopPropagation();
+      window.getSelection?.().removeAllRanges();
+      document.body.classList.add("chart-dragging");
 
       const groupNode = this;
       const pointerId = event.pointerId;
@@ -1247,6 +1250,8 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
 
       const handleMove = moveEvent => {
         if (!chartGroupDrag || chartGroupDrag.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
+        window.getSelection?.().removeAllRanges();
         const dx = moveEvent.clientX - chartGroupDrag.startX;
         const dy = moveEvent.clientY - chartGroupDrag.startY;
         if (Math.hypot(dx, dy) > 5) chartGroupDrag.moved = true;
@@ -1255,14 +1260,27 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         showChartDropMarker(target);
       };
 
-      const handleUp = upEvent => {
+      const cleanupDrag = () => {
         document.removeEventListener("pointermove", handleMove);
         document.removeEventListener("pointerup", handleUp);
+        document.removeEventListener("pointercancel", handleCancel);
         groupNode.classList.remove("group-dragging");
+        document.body.classList.remove("chart-dragging");
         svgEl.releasePointerCapture?.(pointerId);
+        clearChartDropMarkers();
+      };
+
+      const handleCancel = () => {
+        cleanupDrag();
+        chartGroupDrag = null;
+      };
+
+      const handleUp = upEvent => {
+        upEvent.preventDefault();
+        window.getSelection?.().removeAllRanges();
+        cleanupDrag();
         const drag = chartGroupDrag;
         chartGroupDrag = null;
-        clearChartDropMarkers();
         if (!drag || !drag.moved) return;
 
         suppressGroupClickUntil = Date.now() + 250;
@@ -1275,6 +1293,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
 
       document.addEventListener("pointermove", handleMove);
       document.addEventListener("pointerup", handleUp);
+      document.addEventListener("pointercancel", handleCancel);
     })
     .on("click", function(event, d) {
       if (Date.now() < suppressGroupClickUntil) {

@@ -412,6 +412,14 @@
     opacity: 0.5;
   }
 
+  .bracket-group,
+  .bracket-group *,
+  body.chart-dragging #chart-area,
+  body.chart-dragging #chart-area * {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   .chart-drop-marker {
     filter: drop-shadow(0 0 4px rgba(255, 170, 0, 0.35));
   }
@@ -550,6 +558,8 @@
     padding: 24px;
     position: relative;
     min-height: 200px;
+    -webkit-user-select: none;
+    user-select: none;
   }
   #loading {
     position: absolute;
