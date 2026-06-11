@@ -1,20 +1,31 @@
-# Speleothems Stock Charts
+# Frank Stocks
 
-A horizon-bands overlay chart for your stock watchlist, resembling geological cave formations (speleothems with upward green stalagmites and downward red stalactites). Powered by yfinance + Flask + D3.
+A TanStack Start stock watchlist and return dashboard for tracking AI, chips, energy, defense, fintech, and consumer narratives.
+
+## Stack
+
+- TanStack Start + TanStack Router
+- React 19
+- D3 scales/SVG rendering
+- Yahoo Finance data through `yahoo-finance2`
+- Local JSON persistence for `watchlist.json`
 
 ## Setup
 
 ```bash
-cd stock_narrative
-pip install -r requirements.txt
-python app.py
+npm install
+npm run dev
 ```
 
-Then open **http://localhost:5050** in your browser.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Features
+## Scripts
 
-- Add/remove tickers from a persistent watchlist
-- Ridgeline plot showing normalized % returns (D3 v7)
-- Switch between 1M / 3M / 6M / 1Y views
-- Hover tooltip showing price and % change
+```bash
+npm run dev
+npm run build
+npm run preview
+npm start
+```
+
+`price_cache.json` is generated at runtime and ignored by Git.
