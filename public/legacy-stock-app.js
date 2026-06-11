@@ -7,6 +7,7 @@ let horizonBands = 3;
 let horizonSize  = 26;
 let currentScaleMode = "fib-ratios";
 let currentDomainMode = "global";
+let priceLoadSeq = 0;
 
 // ── Diverging two-color schema (no hue encoding per stock) ──
 const posColor = "#18c96a";
@@ -14,6 +15,9 @@ const negColor = "#e84040";
 
 // ── API helpers ──
 async function apiFetch(path, opts) {
+  if (window.__stocksQueryFetch) {
+    return window.__stocksQueryFetch(path, opts);
+  }
   const r = await fetch(API + path, opts);
   return r.json();
 }
@@ -23,6 +27,7 @@ async function loadWatchlist() {
 }
 
 async function loadPrices() {
+  const seq = ++priceLoadSeq;
   const symbols = Object.values(watchlist).flat();
   if (!symbols.length) { 
     priceData = []; 
@@ -37,16 +42,43 @@ async function loadPrices() {
     fetchSymbols.push(benchmarkTicker);
   }
 
-  document.getElementById("loading").style.display = "flex";
+  const pricePath = "/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod;
+  const cached = window.__stocksGetCachedApi ? window.__stocksGetCachedApi(pricePath) : null;
+  const hasCachedPrices = cached && Array.isArray(cached.data);
+
+  if (hasCachedPrices) {
+    priceData = cached.data;
+    renderChart();
+    renderStats();
+  }
+
+  document.getElementById("loading").style.display = hasCachedPrices ? "none" : "flex";
   const ridgeline = document.getElementById("ridgeline");
-  if (ridgeline) ridgeline.style.display = "none";
+  if (ridgeline && !hasCachedPrices) ridgeline.style.display = "none";
 
-  priceData = await apiFetch("/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod);
+  if (hasCachedPrices && !cached.stale) {
+    return;
+  }
 
-  document.getElementById("loading").style.display = "none";
-  if (ridgeline) ridgeline.style.display = "";
-  renderChart();
-  renderStats();
+  try {
+    const nextPriceData = await apiFetch(pricePath, { force: Boolean(hasCachedPrices && cached.stale) });
+    if (seq !== priceLoadSeq) return;
+    priceData = nextPriceData;
+    renderChart();
+    renderStats();
+  } catch (error) {
+    if (!hasCachedPrices) {
+      priceData = [];
+      renderChart();
+      renderStats();
+      console.error(error);
+    }
+  } finally {
+    if (seq === priceLoadSeq) {
+      document.getElementById("loading").style.display = "none";
+      if (ridgeline) ridgeline.style.display = "";
+    }
+  }
 }
 
 // ── Delete stock event delegation ──

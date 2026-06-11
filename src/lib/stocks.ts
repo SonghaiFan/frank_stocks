@@ -40,10 +40,19 @@ type YahooChartResult = {
   quotes?: YahooChartQuote[]
 }
 
+type CacheEnvelope<T> = {
+  data: T
+  expiresAt: number
+}
+
 const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
 const yahooFinance = new YahooFinance()
+const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
+const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
+const quoteCache = new Map<string, CacheEnvelope<Quote>>()
+const pendingQuoteRequests = new Map<string, Promise<Quote>>()
 
 const etFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/New_York',
@@ -201,8 +210,52 @@ async function setCachedPrices(symbol: string, period: string, prices: PriceBar[
 
 export function getInterval(period: string) {
   if (period === '1d') return '1m'
-  if (period === '5d') return '1h'
+  if (period === '5d') return '5m'
   return '1d'
+}
+
+function priceCacheTtl(period: string) {
+  if (period === '1d') return 20_000
+  if (period === '5d') return 90_000
+  if (period === '1mo') return 10 * 60_000
+  return 6 * 60 * 60_000
+}
+
+function getMemoryPrices(cacheKey: string) {
+  const cached = memoryPriceCache.get(cacheKey)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    memoryPriceCache.delete(cacheKey)
+    return null
+  }
+  return cached.data
+}
+
+function setMemoryPrices(cacheKey: string, period: string, prices: PriceBar[]) {
+  memoryPriceCache.set(cacheKey, {
+    data: prices,
+    expiresAt: Date.now() + priceCacheTtl(period),
+  })
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+      }
+    }),
+  )
+
+  return results
 }
 
 function normalizePeriod(period: string | null) {
@@ -249,45 +302,63 @@ export async function getPricesFromQuery(url: string) {
 
   const interval = getInterval(period)
   const cacheable = cacheablePeriods.has(period)
-  const cache = cacheable ? await loadCache() : null
-  const result: PriceSeries[] = []
+  const diskCache = cacheable ? await loadCache() : null
+  let diskCacheDirty = false
 
-  for (const symbol of symbols) {
-    try {
-      const cacheKey = `${symbol}|${period}`
-      if (cacheable && cache?.data[cacheKey]) {
-        result.push({ symbol, prices: cache.data[cacheKey], interval })
-        continue
-      }
+  const result = await mapWithConcurrency(symbols, 8, async (symbol) => {
+    const cacheKey = `${symbol}|${period}`
+    const memoryPrices = getMemoryPrices(cacheKey)
+    if (memoryPrices) return { symbol, prices: memoryPrices, interval }
 
-      const rows = (await yahooFinance.chart(symbol, {
-        period1: periodStart(period),
-        period2: new Date(),
-        interval,
-      })) as YahooChartResult
-      const quotes = rows.quotes || []
-      const today = todayEt()
-
-      const prices = quotes
-        .filter((quote) => typeof quote.close === 'number' && quote.date instanceof Date)
-        .filter((quote) => period !== '1d' || toDateKey(quote.date) === today)
-        .map((quote) => ({
-          date: interval === '1d' ? toDateKey(quote.date) : quote.date.toISOString(),
-          close: roundPrice(quote.close as number),
-          ...(interval === '1d' ? {} : { ts: quote.date.getTime() }),
-        }))
-
-      if (cacheable) {
-        await setCachedPrices(symbol, period, prices)
-      }
-
-      result.push({ symbol, prices, interval })
-    } catch (error) {
-      result.push({
-        symbol,
-        error: error instanceof Error ? error.message : String(error),
-      })
+    if (cacheable && diskCache?.data[cacheKey]) {
+      setMemoryPrices(cacheKey, period, diskCache.data[cacheKey])
+      return { symbol, prices: diskCache.data[cacheKey], interval }
     }
+
+    const pending = pendingPriceRequests.get(cacheKey)
+    if (pending) return pending
+
+    const request = (async (): Promise<PriceSeries> => {
+      try {
+        const rows = (await yahooFinance.chart(symbol, {
+          period1: periodStart(period),
+          period2: new Date(),
+          interval,
+        })) as YahooChartResult
+        const quotes = rows.quotes || []
+        const today = todayEt()
+
+        const prices = quotes
+          .filter((quote) => typeof quote.close === 'number' && quote.date instanceof Date)
+          .filter((quote) => period !== '1d' || toDateKey(quote.date) === today)
+          .map((quote) => ({
+            date: interval === '1d' ? toDateKey(quote.date) : quote.date.toISOString(),
+            close: roundPrice(quote.close as number),
+            ...(interval === '1d' ? {} : { ts: quote.date.getTime() }),
+          }))
+
+        setMemoryPrices(cacheKey, period, prices)
+        if (cacheable && diskCache) {
+          diskCache.data[cacheKey] = prices
+          diskCacheDirty = true
+        }
+
+        return { symbol, prices, interval }
+      } catch (error) {
+        return {
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    })()
+
+    pendingPriceRequests.set(cacheKey, request)
+    request.finally(() => pendingPriceRequests.delete(cacheKey))
+    return request
+  })
+
+  if (cacheable && diskCacheDirty && diskCache) {
+    await writeJson(cacheFile, diskCache)
   }
 
   return result
@@ -302,10 +373,15 @@ export async function getQuotesFromQuery(url: string) {
 
   if (symbols.length === 0) return []
 
-  const result: Quote[] = []
+  return mapWithConcurrency(symbols, 8, async (symbol) => {
+    const cached = quoteCache.get(symbol)
+    if (cached && cached.expiresAt > Date.now()) return cached.data
 
-  for (const symbol of symbols) {
-    try {
+    const pending = pendingQuoteRequests.get(symbol)
+    if (pending) return pending
+
+    const request = (async (): Promise<Quote> => {
+      try {
       const rows = (await yahooFinance.chart(symbol, {
         period1: periodStart('1d'),
         period2: new Date(),
@@ -319,8 +395,7 @@ export async function getQuotesFromQuery(url: string) {
       )
 
       if (quotes.length === 0) {
-        result.push({ symbol, error: 'no data' })
-        continue
+        return { symbol, error: 'no data' }
       }
 
       const first = quotes[0]
@@ -330,7 +405,7 @@ export async function getQuotesFromQuery(url: string) {
       const change = roundPrice(lastPrice - openPrice)
       const pctChange = openPrice ? roundPrice((change / openPrice) * 100) : 0
 
-      result.push({
+      const quote = {
         symbol,
         price: lastPrice,
         open: openPrice,
@@ -343,16 +418,24 @@ export async function getQuotesFromQuery(url: string) {
           close: lastPrice,
           ts: last.date.getTime(),
         },
+      }
+      quoteCache.set(symbol, {
+        data: quote,
+        expiresAt: Date.now() + 10_000,
       })
+      return quote
     } catch (error) {
-      result.push({
+      return {
         symbol,
         error: error instanceof Error ? error.message : String(error),
-      })
+      }
     }
-  }
+    })()
 
-  return result
+    pendingQuoteRequests.set(symbol, request)
+    request.finally(() => pendingQuoteRequests.delete(symbol))
+    return request
+  })
 }
 
 export function getMarketStatus() {
