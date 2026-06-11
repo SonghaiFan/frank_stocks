@@ -613,9 +613,36 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     });
   });
 
-  const x = d3.scaleUtc()
+  const compressIntradayAxis = currentPeriod === "1d" || currentPeriod === "5d";
+  const sortedTimestamps = Array.from(new Set(flat.map(d => +d.date))).sort((a, b) => a - b);
+  const timestampIndex = new Map(sortedTimestamps.map((ts, idx) => [ts, idx]));
+  const xTime = d3.scaleUtc()
     .domain(d3.extent(flat, d => d.date))
     .range([marginLeft, width - marginRight]);
+  const xIndex = d3.scaleLinear()
+    .domain([0, Math.max(1, sortedTimestamps.length - 1)])
+    .range([marginLeft, width - marginRight]);
+  const xForDate = date => compressIntradayAxis ? xIndex(timestampIndex.get(+date) ?? 0) : xTime(date);
+  const nearestPointForX = (mx, pts) => {
+    if (!compressIntradayAxis) {
+      const hoverDate = xTime.invert(mx);
+      let best = pts[0], bestDist = Infinity;
+      pts.forEach(v => {
+        const dist = Math.abs(v.date - hoverDate);
+        if (dist < bestDist) { bestDist = dist; best = v; }
+      });
+      return best;
+    }
+
+    const targetIndex = Math.round(xIndex.invert(mx));
+    let best = pts[0], bestDist = Infinity;
+    pts.forEach(v => {
+      const idx = timestampIndex.get(+v.date) ?? 0;
+      const dist = Math.abs(idx - targetIndex);
+      if (dist < bestDist) { bestDist = dist; best = v; }
+    });
+    return best;
+  };
 
   const globalMax = d3.max(flat, d => Math.abs(d.value)) || 1;
   const thresholds = getThresholds(currentScaleMode, bands, globalMax);
@@ -762,7 +789,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
 
     const areaGen = d3.area()
       .defined(d => !isNaN(d.value))
-      .x(d => x(d.date))
+      .x(d => xForDate(d.date))
       .curve(d3.curveBasis);
 
     if (sign > 0) {
@@ -1007,12 +1034,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
           .attr("x1", mx)
           .attr("x2", mx);
 
-        const hoverDate = x.invert(mx);
-        let best = pts[0], bestDist = Infinity;
-        pts.forEach(v => {
-          const dist = Math.abs(v.date - hoverDate);
-          if (dist < bestDist) { bestDist = dist; best = v; }
-        });
+        const best = nearestPointForX(mx, pts);
         const color = best.value >= 0 ? posColor : negColor;
         
         tooltip.style.opacity = "1";
@@ -1073,42 +1095,72 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       });
   });
 
-  // Period-aware tick interval and format
-  let tickInterval, tickFormat;
-  if (currentPeriod === "1d") {
-    tickInterval = d3.timeHour.every(1);
-    tickFormat   = d3.timeFormat("%-I%p");
-  } else if (currentPeriod === "5d") {
-    tickInterval = d3.timeHour.every(4);
-    tickFormat   = d3.timeFormat("%a %-I%p");
-  } else if (currentPeriod === "1mo") {
-    tickInterval = d3.timeDay.every(3);
-    tickFormat   = d3.timeFormat("%b %d");
-  } else if (currentPeriod === "3mo") {
-    tickInterval = d3.timeWeek.every(1);
-    tickFormat   = d3.timeFormat("%b %d");
-  } else if (currentPeriod === "6mo") {
-    tickInterval = d3.timeMonth.every(1);
-    tickFormat   = d3.timeFormat("%b '%y");
-  } else {
-    tickInterval = d3.timeMonth.every(3);
-    tickFormat   = d3.timeFormat("%b '%y");
-  }
-
-  s.append("g")
+  const axis = s.append("g")
     .attr("transform", `translate(0,${marginTop})`)
-    .attr("class", "x-axis-shared")
-    .call(
-      d3.axisTop(x)
-        .ticks(tickInterval)
-        .tickFormat(tickFormat)
-        .tickSizeOuter(0)
-    )
-    .call(ax => ax.selectAll(".tick")
-      .filter(d => x(d) < marginLeft || x(d) >= width - marginRight)
-      .remove()
-    )
-    .call(ax => ax.select(".domain").remove());
+    .attr("class", "x-axis-shared");
+
+  if (compressIntradayAxis) {
+    const formatTime = date => new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      hour12: true,
+    }).format(date).replace(/\s/g, "");
+    const formatDay = date => new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+    }).format(date);
+    const tickIndexes = [];
+    let lastLabel = "";
+
+    sortedTimestamps.forEach((ts, idx) => {
+      const date = new Date(ts);
+      const label = currentPeriod === "5d" ? formatDay(date) : formatTime(date);
+      if (idx === 0 || label !== lastLabel) {
+        tickIndexes.push(idx);
+        lastLabel = label;
+      }
+    });
+
+    axis
+      .call(
+        d3.axisTop(xIndex)
+          .tickValues(tickIndexes)
+          .tickFormat(idx => {
+            const date = new Date(sortedTimestamps[Math.round(idx)] || sortedTimestamps[0]);
+            return currentPeriod === "5d" ? formatDay(date) : formatTime(date);
+          })
+          .tickSizeOuter(0)
+      )
+      .call(ax => ax.select(".domain").remove());
+  } else {
+    let tickInterval, tickFormat;
+    if (currentPeriod === "1mo") {
+      tickInterval = d3.timeDay.every(3);
+      tickFormat   = d3.timeFormat("%b %d");
+    } else if (currentPeriod === "3mo") {
+      tickInterval = d3.timeWeek.every(1);
+      tickFormat   = d3.timeFormat("%b %d");
+    } else if (currentPeriod === "6mo") {
+      tickInterval = d3.timeMonth.every(1);
+      tickFormat   = d3.timeFormat("%b '%y");
+    } else {
+      tickInterval = d3.timeMonth.every(3);
+      tickFormat   = d3.timeFormat("%b '%y");
+    }
+
+    axis
+      .call(
+        d3.axisTop(xTime)
+          .ticks(tickInterval)
+          .tickFormat(tickFormat)
+          .tickSizeOuter(0)
+      )
+      .call(ax => ax.selectAll(".tick")
+        .filter(d => xTime(d) < marginLeft || xTime(d) >= width - marginRight)
+        .remove()
+      )
+      .call(ax => ax.select(".domain").remove());
+  }
 
   // Initialize/re-initialize Lucide Icons (e.g. for the foreignObject icons)
   lucide.createIcons();

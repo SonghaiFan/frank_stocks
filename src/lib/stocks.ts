@@ -49,6 +49,7 @@ const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
 const yahooFinance = new YahooFinance()
+const priceCacheVersion = 'v2'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
 const quoteCache = new Map<string, CacheEnvelope<Quote>>()
@@ -76,6 +77,14 @@ const etWeekdayFormatter = new Intl.DateTimeFormat('en-US', {
 
 const etShortTimeFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const etTradePartFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  weekday: 'short',
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
@@ -268,7 +277,7 @@ function periodStart(period: string) {
   const start = new Date(now)
 
   if (period === '1d') start.setDate(now.getDate() - 1)
-  else if (period === '5d') start.setDate(now.getDate() - 6)
+  else if (period === '5d') start.setDate(now.getDate() - 10)
   else if (period === '1mo') start.setMonth(now.getMonth() - 1)
   else if (period === '3mo') start.setMonth(now.getMonth() - 3)
   else if (period === '6mo') start.setMonth(now.getMonth() - 6)
@@ -284,6 +293,16 @@ function periodStart(period: string) {
 
 function toDateKey(date: Date) {
   return etFormatter.format(date)
+}
+
+function isRegularTradingBar(date: Date) {
+  const parts = etTradePartFormatter.formatToParts(date)
+  const weekday = parts.find((part) => part.type === 'weekday')?.value
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0)
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0)
+  const minutes = hour * 60 + minute
+
+  return weekday !== 'Sat' && weekday !== 'Sun' && minutes >= 9 * 60 + 30 && minutes <= 16 * 60
 }
 
 function roundPrice(value: number) {
@@ -306,7 +325,7 @@ export async function getPricesFromQuery(url: string) {
   let diskCacheDirty = false
 
   const result = await mapWithConcurrency(symbols, 8, async (symbol) => {
-    const cacheKey = `${symbol}|${period}`
+    const cacheKey = `${priceCacheVersion}|${symbol}|${period}|${interval}`
     const memoryPrices = getMemoryPrices(cacheKey)
     if (memoryPrices) return { symbol, prices: memoryPrices, interval }
 
@@ -328,9 +347,18 @@ export async function getPricesFromQuery(url: string) {
         const quotes = rows.quotes || []
         const today = todayEt()
 
-        const prices = quotes
+        let filteredQuotes = quotes
           .filter((quote) => typeof quote.close === 'number' && quote.date instanceof Date)
           .filter((quote) => period !== '1d' || toDateKey(quote.date) === today)
+          .filter((quote) => interval === '1d' || isRegularTradingBar(quote.date))
+
+        if (period === '5d') {
+          const tradingDays = Array.from(new Set(filteredQuotes.map((quote) => toDateKey(quote.date)))).slice(-5)
+          const tradingDaySet = new Set(tradingDays)
+          filteredQuotes = filteredQuotes.filter((quote) => tradingDaySet.has(toDateKey(quote.date)))
+        }
+
+        const prices = filteredQuotes
           .map((quote) => ({
             date: interval === '1d' ? toDateKey(quote.date) : quote.date.toISOString(),
             close: roundPrice(quote.close as number),
