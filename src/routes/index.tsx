@@ -16,7 +16,7 @@ declare global {
 }
 
 export const Route = createFileRoute('/')({
-  component: LegacyStockInterface,
+  component: StockDashboard,
 })
 
 const queryClient = new QueryClient({
@@ -45,7 +45,7 @@ function apiUrl(path: string) {
 }
 
 function queryKey(path: string) {
-  return ['legacy-api', path] as const
+  return ['stocks-api', path] as const
 }
 
 function installQueryBridge() {
@@ -74,7 +74,7 @@ function installQueryBridge() {
       const response = await fetch(url, opts)
       const body = await response.json().catch(() => null)
       if (!response.ok) throw new Error(body?.error || response.statusText)
-      queryClient.removeQueries({ queryKey: ['legacy-api'] })
+      queryClient.removeQueries({ queryKey: ['stocks-api'] })
       return body
     }
 
@@ -96,7 +96,7 @@ function installQueryBridge() {
 
 installQueryBridge()
 
-function LegacyStockInterface() {
+function StockDashboard() {
   const [html, setHtml] = useState('')
   const booted = useRef(false)
 
@@ -105,7 +105,7 @@ function LegacyStockInterface() {
 
     let cancelled = false
 
-    fetch('/legacy-body.html')
+    fetch('/stock-dashboard-body.html')
       .then((response) => response.text())
       .then((bodyHtml) => {
         if (!cancelled) setHtml(bodyHtml)
@@ -143,9 +143,9 @@ function LegacyStockInterface() {
 
     installQueryBridge()
 
-    loadScript('legacy-d3', 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js')
-      .then(() => loadScript('legacy-lucide', 'https://unpkg.com/lucide@latest'))
-      .then(() => loadScript('legacy-stock-app', '/legacy-stock-app.js'))
+    loadScript('stocks-d3', 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js')
+      .then(() => loadScript('stocks-lucide', 'https://unpkg.com/lucide@latest'))
+      .then(() => loadScript('stock-dashboard-app', '/stock-dashboard-app.js'))
       .catch((error) => {
         console.error(error)
       })
