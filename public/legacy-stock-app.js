@@ -613,7 +613,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     });
   });
 
-  const compressIntradayAxis = currentPeriod === "1d" || currentPeriod === "5d";
+  const compressIntradayAxis = ["1d", "5d", "1mo", "3mo"].includes(currentPeriod);
   const sortedTimestamps = Array.from(new Set(flat.map(d => +d.date))).sort((a, b) => a - b);
   const timestampIndex = new Map(sortedTimestamps.map((ts, idx) => [ts, idx]));
   const xTime = d3.scaleUtc()
@@ -1109,17 +1109,45 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       timeZone: "America/New_York",
       weekday: "short",
     }).format(date);
-    const tickIndexes = [];
+    const formatDate = date => new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+    }).format(date);
+    const formatDateKey = date => new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+    let tickIndexes = [];
     let lastLabel = "";
 
-    sortedTimestamps.forEach((ts, idx) => {
-      const date = new Date(ts);
-      const label = currentPeriod === "5d" ? formatDay(date) : formatTime(date);
-      if (idx === 0 || label !== lastLabel) {
-        tickIndexes.push(idx);
-        lastLabel = label;
-      }
-    });
+    if (currentPeriod === "1d" || currentPeriod === "5d") {
+      sortedTimestamps.forEach((ts, idx) => {
+        const date = new Date(ts);
+        const label = currentPeriod === "5d" ? formatDay(date) : formatTime(date);
+        if (idx === 0 || label !== lastLabel) {
+          tickIndexes.push(idx);
+          lastLabel = label;
+        }
+      });
+    } else {
+      const firstIndexByDay = [];
+      let lastDay = "";
+      sortedTimestamps.forEach((ts, idx) => {
+        const day = formatDateKey(new Date(ts));
+        if (day !== lastDay) {
+          firstIndexByDay.push(idx);
+          lastDay = day;
+        }
+      });
+      const targetTickCount = currentPeriod === "1mo" ? 6 : 8;
+      const step = Math.max(1, Math.ceil(firstIndexByDay.length / targetTickCount));
+      tickIndexes = firstIndexByDay.filter((_, idx) => idx % step === 0);
+      const lastIndex = firstIndexByDay[firstIndexByDay.length - 1];
+      if (lastIndex !== undefined && !tickIndexes.includes(lastIndex)) tickIndexes.push(lastIndex);
+    }
 
     axis
       .call(
@@ -1127,7 +1155,9 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
           .tickValues(tickIndexes)
           .tickFormat(idx => {
             const date = new Date(sortedTimestamps[Math.round(idx)] || sortedTimestamps[0]);
-            return currentPeriod === "5d" ? formatDay(date) : formatTime(date);
+            if (currentPeriod === "1d") return formatTime(date);
+            if (currentPeriod === "5d") return formatDay(date);
+            return formatDate(date);
           })
           .tickSizeOuter(0)
       )

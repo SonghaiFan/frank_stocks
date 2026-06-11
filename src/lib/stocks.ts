@@ -49,7 +49,7 @@ const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
 const yahooFinance = new YahooFinance()
-const priceCacheVersion = 'v2'
+const priceCacheVersion = 'v3'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
 const quoteCache = new Map<string, CacheEnvelope<Quote>>()
@@ -220,6 +220,8 @@ async function setCachedPrices(symbol: string, period: string, prices: PriceBar[
 export function getInterval(period: string) {
   if (period === '1d') return '1m'
   if (period === '5d') return '5m'
+  if (period === '1mo') return '30m'
+  if (period === '3mo') return '1h'
   return '1d'
 }
 
@@ -227,6 +229,7 @@ function priceCacheTtl(period: string) {
   if (period === '1d') return 20_000
   if (period === '5d') return 90_000
   if (period === '1mo') return 10 * 60_000
+  if (period === '3mo') return 30 * 60_000
   return 6 * 60 * 60_000
 }
 
