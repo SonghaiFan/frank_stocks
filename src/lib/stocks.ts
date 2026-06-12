@@ -47,7 +47,7 @@ type CacheEnvelope<T> = {
 const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
-const priceCacheVersion = 'v4'
+const priceCacheVersion = 'v5'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
 const quoteCache = new Map<string, CacheEnvelope<Quote>>()
@@ -268,14 +268,12 @@ async function setCachedPrices(symbol: string, period: string, prices: PriceBar[
   await writeJson(cacheFile, cache)
 }
 
-export function getInterval(period: string) {
+export function getInterval(period: string, target?: number) {
   if (period === '1d') return '1m'
   if (period === '5d') return '5m'
-  if (period === '1mo') return '30m'
-  if (period === '3mo') return '1h'
-  if (period === '6mo') return '1h'
-  if (period === '1y') return '1h'
-  if (period === '5y') return '1wk'
+  if (period === '1mo') return target && target >= 360 ? '30m' : '1d'
+  if (period === '3mo') return target && target >= 560 ? '1h' : '1d'
+  if (period === '5y' || period === '10y') return '1wk'
   if (period === 'max') return '1mo'
   return '1d'
 }
@@ -349,27 +347,45 @@ function periodStart(period: string) {
   return start
 }
 
-function targetBars(period: string) {
-  if (period === '5y') return 300
+function defaultTargetBars(period: string) {
+  if (period === '1d') return 420
+  if (period === '5d') return 420
+  if (period === '1mo') return 260
+  if (period === '3mo') return 320
+  if (period === '5y' || period === '10y') return 300
   if (period === 'max') return 320
-  return 320
+  return 360
+}
+
+function normalizeTargetBars(value: string | null, period: string) {
+  const parsed = Number(value)
+  const fallback = defaultTargetBars(period)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  const clamped = Math.min(1200, Math.max(80, Math.round(parsed)))
+  return Math.round(clamped / 20) * 20
 }
 
 function resamplePrices(prices: PriceBar[], target: number) {
   if (prices.length <= target) return prices
   if (target < 2) return prices.slice(0, target)
 
-  const sampled: PriceBar[] = []
-  const seen = new Set<number>()
+  const sampled: PriceBar[] = [prices[0]]
+  const bucketCount = target - 2
+  const innerLength = prices.length - 2
 
-  for (let i = 0; i < target; i++) {
-    const index = Math.round((i * (prices.length - 1)) / (target - 1))
-    if (!seen.has(index)) {
-      sampled.push(prices[index])
-      seen.add(index)
-    }
+  for (let i = 0; i < bucketCount; i++) {
+    const start = 1 + Math.floor((i * innerLength) / bucketCount)
+    const end = 1 + Math.floor(((i + 1) * innerLength) / bucketCount)
+    const bucket = prices.slice(start, Math.max(start + 1, end))
+    const close = bucket.reduce((sum, price) => sum + price.close, 0) / bucket.length
+    const representative = bucket[Math.floor(bucket.length / 2)]
+    sampled.push({
+      ...representative,
+      close: roundPrice(close),
+    })
   }
 
+  sampled.push(prices[prices.length - 1])
   return sampled
 }
 
@@ -402,16 +418,17 @@ export async function getPricesFromQuery(url: string) {
     .map(normalizeSymbol)
     .filter(Boolean)
   const period = normalizePeriod(requestUrl.searchParams.get('period'))
+  const target = normalizeTargetBars(requestUrl.searchParams.get('points'), period)
 
   if (symbols.length === 0) return []
 
-  const interval = getInterval(period)
+  const interval = getInterval(period, target)
   const cacheable = cacheablePeriods.has(period)
   const diskCache = cacheable ? await loadCache() : null
   let diskCacheDirty = false
 
   const result = await mapWithConcurrency(symbols, 8, async (symbol) => {
-    const cacheKey = `${priceCacheVersion}|${symbol}|${period}|${interval}`
+    const cacheKey = `${priceCacheVersion}|${symbol}|${period}|${interval}|${target}`
     const memoryPrices = getMemoryPrices(cacheKey)
     if (memoryPrices) return { symbol, prices: memoryPrices, interval }
 
@@ -449,7 +466,7 @@ export async function getPricesFromQuery(url: string) {
             date: isIntradayInterval(interval) ? quote.date.toISOString() : toDateKey(quote.date),
             close: roundPrice(quote.close as number),
             ...(isIntradayInterval(interval) ? { ts: quote.date.getTime() } : {}),
-          })), targetBars(period))
+          })), target)
 
         setMemoryPrices(cacheKey, period, prices)
         if (cacheable && diskCache) {

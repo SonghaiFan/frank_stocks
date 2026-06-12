@@ -8,6 +8,8 @@ let horizonSize  = 26;
 let currentScaleMode = "fib-ratios";
 let currentDomainMode = "global";
 let priceLoadSeq = 0;
+let activePricePointTarget = null;
+let resizeTimer = null;
 let currentLayoutMode = localStorage.getItem("stocks.layoutMode") || "sector";
 let currentRankMode = localStorage.getItem("stocks.rankMode") || "return-desc";
 
@@ -278,6 +280,34 @@ async function apiFetch(path, opts) {
   return r.json();
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getPricePointTarget() {
+  const container = document.getElementById("chart-area");
+  const containerWidth = container?.clientWidth || window.innerWidth || 390;
+  const isDesktop = window.innerWidth >= 1024;
+  const plotWidth = isDesktop
+    ? Math.max(300, Math.floor(containerWidth / 2) - 190)
+    : Math.max(240, containerWidth);
+  const density = isDesktop ? 1.25 : 0.65;
+  const periodBounds = {
+    "1d": [140, 900],
+    "5d": [160, 900],
+    "1mo": [90, 900],
+    "3mo": [120, 1000],
+    "6mo": [140, 1000],
+    "1y": [160, 1100],
+    "2y": [180, 1100],
+    "5y": [200, 700],
+    "max": [200, 700],
+  };
+  const [minPoints, maxPoints] = periodBounds[currentPeriod] || [140, 900];
+  const raw = clamp(Math.round(plotWidth * density), minPoints, maxPoints);
+  return Math.round(raw / 20) * 20;
+}
+
 async function loadWatchlist() {
   watchlist = await apiFetch("/watchlist");
 }
@@ -298,7 +328,9 @@ async function loadPrices() {
     fetchSymbols.push(benchmarkTicker);
   }
 
-  const pricePath = "/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod;
+  const pointTarget = getPricePointTarget();
+  activePricePointTarget = pointTarget;
+  const pricePath = "/prices?symbols=" + fetchSymbols.map(s => encodeURIComponent(s)).join(",") + "&period=" + currentPeriod + "&points=" + pointTarget;
   const cached = window.__stocksGetCachedApi ? window.__stocksGetCachedApi(pricePath) : null;
   const hasCachedPrices = cached && Array.isArray(cached.data);
 
@@ -1031,7 +1063,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     const areaGen = d3.area()
       .defined(d => !isNaN(d.value))
       .x(d => xForDate(d.date))
-      .curve(d3.curveBasis);
+      .curve(d3.curveMonotoneX);
 
     if (sign > 0) {
       areaGen
@@ -1544,8 +1576,16 @@ function applyDesktopLayout() {
 }
 
 window.addEventListener("resize", () => {
-  applyDesktopLayout();
-  renderChart();
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    applyDesktopLayout();
+    const nextPointTarget = getPricePointTarget();
+    if (priceData.length > 0 && activePricePointTarget !== null && nextPointTarget !== activePricePointTarget) {
+      loadPrices();
+      return;
+    }
+    renderChart();
+  }, 120);
 });
 
 // ── Init ──
