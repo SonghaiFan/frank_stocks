@@ -300,10 +300,32 @@ button {
   cursor: crosshair;
 }
 
+.strip-has-range {
+  cursor: grab;
+}
+
+.strip-has-range:active {
+  cursor: grabbing;
+}
+
 .strip svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.range-selection {
+  fill: var(--accent);
+  fill-opacity: 0.16;
+  pointer-events: none;
+}
+
+.range-edge {
+  stroke: var(--accent);
+  stroke-opacity: 0.85;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .strip .nodata {
@@ -327,12 +349,6 @@ button {
 }
 
 .row-pct small {
-  font-size: 9px;
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.row-price {
   font-size: 9px;
   font-weight: 400;
   color: var(--muted);

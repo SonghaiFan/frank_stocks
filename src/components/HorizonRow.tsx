@@ -14,6 +14,10 @@ export type RowPoint = {
 
 export type ScaleMode = 'fibonacci' | 'normal'
 export type XDomainMode = 'global' | 'local'
+type SelectedRange = { start: number; end: number }
+type DragState =
+  | { mode: 'create'; start: number }
+  | { mode: 'move'; pointerStart: number; rangeStart: number; rangeEnd: number }
 
 type HorizonRowProps = {
   symbol: string
@@ -24,8 +28,8 @@ type HorizonRowProps = {
   max: number
   scaleMode: ScaleMode
   xDomainMode: XDomainMode
-  scrubFrac: number | null
-  onScrub: (frac: number | null) => void
+  selectedRange: SelectedRange | null
+  onRangeChange: (range: SelectedRange | null) => void
   editing: boolean
   onRemove: () => void
   fmtPct: (v: number) => string
@@ -33,6 +37,7 @@ type HorizonRowProps = {
 
 const H = 38
 const BANDS = 4
+const MIN_RANGE_FRACTION = 0.015
 
 function bandOpacity(band: number) {
   return 0.18 + 0.5 * ((band + 1) / BANDS)
@@ -45,8 +50,8 @@ function thresholds(scaleMode: ScaleMode, max: number) {
   return Array.from({ length: BANDS + 1 }, (_, i) => (i / BANDS) * max)
 }
 
-function fmtMoney(value: number) {
-  return `$${value >= 1000 ? value.toFixed(0) : value.toFixed(2)}`
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
 }
 
 export const HorizonRow = memo(function HorizonRow({
@@ -56,8 +61,8 @@ export const HorizonRow = memo(function HorizonRow({
   max,
   scaleMode,
   xDomainMode,
-  scrubFrac,
-  onScrub,
+  selectedRange,
+  onRangeChange,
   editing,
   onRemove,
   fmtPct,
@@ -93,27 +98,94 @@ export const HorizonRow = memo(function HorizonRow({
   }, [pts, width, max, scaleMode, xDomainMode])
 
   const hasData = pts.length >= 2
-  const active = useMemo(() => {
-    if (scrubFrac == null || !hasData) return null
+  const nearestPoint = (frac: number) => {
     let best = pts[0]
     let bestDist = Infinity
     for (const p of pts) {
       const x = xDomainMode === 'local' ? p.localXf : p.xf
-      const dist = Math.abs(x - scrubFrac)
+      const dist = Math.abs(x - frac)
       if (dist < bestDist) {
         bestDist = dist
         best = p
       }
     }
     return best
-  }, [scrubFrac, hasData, pts, xDomainMode])
-  const shown = active ?? (hasData ? pts[pts.length - 1] : null)
+  }
 
-  const scrubAt = (e: React.PointerEvent) => {
+  const rangeReadout = useMemo(() => {
+    if (!selectedRange || !hasData) return null
+    const startFrac = Math.min(selectedRange.start, selectedRange.end)
+    const endFrac = Math.max(selectedRange.start, selectedRange.end)
+    const startPoint = nearestPoint(startFrac)
+    const endPoint = nearestPoint(endFrac)
+    if (!startPoint?.close || !endPoint?.close) return null
+    return ((endPoint.close - startPoint.close) / startPoint.close) * 100
+  }, [selectedRange, hasData, pts, xDomainMode])
+
+  const shown = hasData ? pts[pts.length - 1] : null
+  const displayValue = rangeReadout ?? shown?.v ?? 0
+  const displayClass = displayValue >= 0 ? 'pos' : 'neg'
+  const rangeStart = selectedRange ? Math.min(selectedRange.start, selectedRange.end) : null
+  const rangeEnd = selectedRange ? Math.max(selectedRange.start, selectedRange.end) : null
+  const rangeWidth = rangeStart != null && rangeEnd != null ? Math.max(1, (rangeEnd - rangeStart) * width) : 0
+
+  const dragState = useRef<DragState | null>(null)
+  const fracFromEvent = (e: React.PointerEvent) => {
     if (!hasData) return
     const rect = stripRef.current?.getBoundingClientRect()
     if (!rect || rect.width === 0) return
-    onScrub(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
+    return clamp01((e.clientX - rect.left) / rect.width)
+  }
+
+  const beginRange = (e: React.PointerEvent<HTMLDivElement>) => {
+    const frac = fracFromEvent(e)
+    if (frac == null) return
+    if (rangeStart != null && rangeEnd != null && frac >= rangeStart && frac <= rangeEnd) {
+      dragState.current = {
+        mode: 'move',
+        pointerStart: frac,
+        rangeStart,
+        rangeEnd,
+      }
+    } else {
+      dragState.current = { mode: 'create', start: frac }
+      onRangeChange({ start: frac, end: frac })
+    }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }
+
+  const updateRange = (e: React.PointerEvent<HTMLDivElement>) => {
+    const state = dragState.current
+    if (!state) return
+    const frac = fracFromEvent(e)
+    if (frac == null) return
+    if (state.mode === 'create') {
+      if (Math.abs(frac - state.start) >= MIN_RANGE_FRACTION) {
+        onRangeChange({ start: state.start, end: frac })
+      } else {
+        onRangeChange(null)
+      }
+      return
+    }
+
+    const span = state.rangeEnd - state.rangeStart
+    const nextStart = clamp01(state.rangeStart + frac - state.pointerStart)
+    const clampedStart = Math.min(Math.max(0, nextStart), 1 - span)
+    onRangeChange({ start: clampedStart, end: clampedStart + span })
+  }
+
+  const finishRange = (e: React.PointerEvent<HTMLDivElement>) => {
+    const state = dragState.current
+    dragState.current = null
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+    if (!state) return
+    const end = fracFromEvent(e)
+    if (state.mode === 'move') return
+    if (end == null || Math.abs(end - state.start) < MIN_RANGE_FRACTION) {
+      onRangeChange(null)
+      return
+    }
+    onRangeChange({ start: state.start, end })
   }
 
   return (
@@ -121,12 +193,15 @@ export const HorizonRow = memo(function HorizonRow({
       <span className="row-sym">{symbol}</span>
       <div
         ref={stripRef}
-        className="strip"
-        onPointerDown={scrubAt}
-        onPointerMove={scrubAt}
-        onPointerUp={() => onScrub(null)}
-        onPointerLeave={() => onScrub(null)}
-        onPointerCancel={() => onScrub(null)}
+        className={`strip${selectedRange ? ' strip-has-range' : ''}`}
+        onPointerDown={beginRange}
+        onPointerMove={updateRange}
+        onPointerUp={finishRange}
+        onPointerCancel={() => {
+          const state = dragState.current
+          dragState.current = null
+          if (state?.mode === 'create') onRangeChange(null)
+        }}
       >
         {hasData ? (
           <svg viewBox={`0 0 ${Math.max(1, width)} ${H}`} preserveAspectRatio="none" aria-hidden>
@@ -139,17 +214,30 @@ export const HorizonRow = memo(function HorizonRow({
                 fillOpacity={bandOpacity(p.band)}
               />
             ))}
-            {scrubFrac != null && (
-              <line
-                x1={scrubFrac * width}
-                x2={scrubFrac * width}
-                y1={0}
-                y2={H}
-                stroke="var(--ink)"
-                strokeOpacity={0.45}
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
+            {rangeStart != null && rangeEnd != null && (
+              <>
+                <rect
+                  className="range-selection"
+                  x={rangeStart * width}
+                  y={0}
+                  width={rangeWidth}
+                  height={H}
+                />
+                <line
+                  className="range-edge"
+                  x1={rangeStart * width}
+                  x2={rangeStart * width}
+                  y1={0}
+                  y2={H}
+                />
+                <line
+                  className="range-edge"
+                  x1={rangeEnd * width}
+                  x2={rangeEnd * width}
+                  y1={0}
+                  y2={H}
+                />
+              </>
             )}
           </svg>
         ) : (
@@ -161,9 +249,9 @@ export const HorizonRow = memo(function HorizonRow({
           ×
         </button>
       ) : shown ? (
-        <span className={`row-pct ${shown.v >= 0 ? 'pos' : 'neg'}`}>
-          <AnimatedNumber value={shown.v} formatter={fmtPct} />
-          {active && <AnimatedNumber value={active.close} formatter={fmtMoney} className="row-price" />}
+        <span className={`row-pct ${displayClass}`}>
+          <AnimatedNumber value={displayValue} formatter={fmtPct} />
+          {rangeReadout != null && <small>range</small>}
         </span>
       ) : (
         <span className="row-pct">—</span>

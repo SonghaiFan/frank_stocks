@@ -176,7 +176,7 @@ function buildModel(watchlist: Watchlist | undefined, series: PriceSeries[] | un
     }
   }
 
-  // Shared time axis: the union of every bar date, so the scrub crosshair is
+  // Shared time axis: the union of every bar date, so global range selection is
   // temporal and stocks with shorter histories start partway into the strip.
   const watchSymbols = new Set(Object.values(watchlist ?? {}).flat())
   const dateSet = new Set<string>()
@@ -266,7 +266,7 @@ function Dashboard() {
   const [ranked, setRanked] = useState(false)
   const [scaleMode, setScaleMode] = useState<ScaleMode>('fibonacci')
   const [domainMode, setDomainMode] = useState<DomainMode>('global')
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null)
+  const [selectedRange, setSelectedRange] = useState<{ start: number; end: number } | null>(null)
   const [addError, setAddError] = useState('')
   const { ref: listRef, width: listWidth } = useContainerWidth()
 
@@ -352,31 +352,19 @@ function Dashboard() {
     ]
   }, [ranked, sections])
 
-  const scrubRaf = useRef(0)
-  const handleScrub = useCallback(
-    (frac: number | null) => {
-      cancelAnimationFrame(scrubRaf.current)
-      if (frac == null || dates.length === 0) {
-        setScrubIndex(null)
-        return
-      }
-      const nextIndex = Math.max(0, Math.min(dates.length - 1, Math.round(frac * (dates.length - 1))))
-      scrubRaf.current = requestAnimationFrame(() => setScrubIndex(nextIndex))
-    },
-    [dates.length],
-  )
-
   useEffect(() => {
-    setScrubIndex(null)
-  }, [period, benchmark, dates.length])
+    setSelectedRange(null)
+  }, [period, benchmark, dates.length, domainMode])
 
-  useEffect(() => () => cancelAnimationFrame(scrubRaf.current), [])
-
-  const scrubFrac =
-    scrubIndex != null && dates.length > 1 ? scrubIndex / (dates.length - 1) : null
-  const scrubDate = domainMode === 'global' && scrubIndex != null ? (dates[scrubIndex] ?? null) : null
-  const scrubProgress =
-    domainMode === 'local' && scrubFrac != null ? `${Math.round(scrubFrac * 100)}%` : ''
+  const rangeLabel = (() => {
+    if (!selectedRange) return ''
+    const start = Math.min(selectedRange.start, selectedRange.end)
+    const end = Math.max(selectedRange.start, selectedRange.end)
+    if (domainMode === 'local' || dates.length < 2) return `${Math.round((end - start) * 100)}%`
+    const startIndex = Math.max(0, Math.min(dates.length - 1, Math.round(start * (dates.length - 1))))
+    const endIndex = Math.max(0, Math.min(dates.length - 1, Math.round(end * (dates.length - 1))))
+    return `${fmtDate(dates[startIndex], period)} – ${fmtDate(dates[endIndex], period)}`
+  })()
 
   const fmtPct = useCallback(
     (v: number) => fmtCompactPct(v, period === '1d' ? 2 : 1),
@@ -482,9 +470,7 @@ function Dashboard() {
       {range && (
         <div className="ruler">
           <span>{domainMode === 'local' ? 'Row start' : fmtDate(range.start, period)}</span>
-          <span className="ruler-scrub">
-            {domainMode === 'local' ? scrubProgress : scrubDate ? fmtDate(scrubDate, period) : ''}
-          </span>
+          <span className="ruler-scrub">{rangeLabel}</span>
           <span>{domainMode === 'local' ? 'Latest' : fmtDate(range.end, period)}</span>
         </div>
       )}
@@ -502,8 +488,8 @@ function Dashboard() {
                 max={domainMode === 'global' ? globalMax : row.localMax}
                 scaleMode={scaleMode}
                 xDomainMode={domainMode}
-                scrubFrac={scrubFrac}
-                onScrub={handleScrub}
+                selectedRange={selectedRange}
+                onRangeChange={setSelectedRange}
                 editing={editing}
                 onRemove={() => removeStock.mutate(row.symbol)}
                 fmtPct={fmtPct}
