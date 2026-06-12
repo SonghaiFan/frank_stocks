@@ -242,7 +242,7 @@ async function loadCache(): Promise<{ date: string; data: Record<string, PriceBa
 export function getInterval(period: string, target?: number) {
   if (period === '1d') return '1m'
   if (period === '5d') return '5m'
-  if (period === '1mo') return target && target >= 360 ? '30m' : '1d'
+  if (period === '1mo') return '1h'
   if (period === '3mo') return target && target >= 560 ? '1h' : '1d'
   if (period === '5y' || period === '10y') return '1wk'
   if (period === 'max') return '1mo'
@@ -326,7 +326,7 @@ function defaultTargetBars(period: string) {
   if (period === '1mo') return 260
   if (period === '3mo') return 320
   if (period === '5y' || period === '10y') return 300
-  if (period === 'max') return 320
+  if (period === 'max') return 100
   return 360
 }
 

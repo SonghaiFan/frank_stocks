@@ -9,7 +9,7 @@ import {
 } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HorizonRow } from '~/components/HorizonRow'
-import type { RowPoint } from '~/components/HorizonRow'
+import type { RowPoint, ScaleMode, XDomainMode } from '~/components/HorizonRow'
 
 export const Route = createFileRoute('/')({
   component: StockApp,
@@ -21,17 +21,17 @@ type PriceSeries = { symbol: string; prices?: PriceBar[]; error?: string }
 type MarketStatus = { open: boolean; time_et: string; weekday: string }
 
 const PERIODS = [
-  { key: '1d', label: '1D' },
-  { key: '5d', label: '5D' },
-  { key: '1mo', label: '1M' },
-  { key: '3mo', label: '3M' },
+  { key: '1d', label: 'D' },
+  { key: '5d', label: 'W' },
+  { key: '1mo', label: 'M' },
   { key: '6mo', label: '6M' },
-  { key: '1y', label: '1Y' },
+  { key: '1y', label: 'Y' },
   { key: '5y', label: '5Y' },
   { key: 'max', label: 'MAX' },
 ] as const
 
 type Period = (typeof PERIODS)[number]['key']
+type DomainMode = XDomainMode
 
 const BENCHMARKS = [
   { key: 'none', label: 'No benchmark' },
@@ -60,8 +60,9 @@ const SECTOR_LABELS: Record<string, string> = {
 
 const DEFAULT_SECTORS = Object.keys(SECTOR_LABELS)
 
-// Row grid: 54px symbol + 74px value + two 10px gaps (see app.css .row)
-const NON_CHART_WIDTH = 54 + 74 + 20
+// Row grid chrome: symbol + value + gaps (keep in sync with app.css .row).
+const NON_CHART_WIDTH_MOBILE = 46 + 64 + 12
+const NON_CHART_WIDTH_DESKTOP = 54 + 74 + 20
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
@@ -74,7 +75,6 @@ function priceStaleTime(period: Period) {
   if (period === '1d') return 20_000
   if (period === '5d') return 90_000
   if (period === '1mo') return 10 * 60_000
-  if (period === '3mo') return 30 * 60_000
   return 6 * 60 * 60_000
 }
 
@@ -149,7 +149,7 @@ function useContainerWidth() {
   return { ref, width }
 }
 
-type SectionRow = { symbol: string; pts: RowPoint[] }
+type SectionRow = { symbol: string; pts: RowPoint[]; localMax: number }
 type Section = { sector: string; rows: SectionRow[] }
 
 function buildModel(watchlist: Watchlist | undefined, series: PriceSeries[] | undefined, benchmark: string) {
@@ -182,14 +182,26 @@ function buildModel(watchlist: Watchlist | undefined, series: PriceSeries[] | un
     .map(([sector, symbols]) => {
       const rows = symbols.map((symbol): SectionRow => {
         const entry = bySymbol.get(symbol)
-        if (!entry?.prices || entry.prices.length < 2) return { symbol, pts: [] }
+        if (!entry?.prices || entry.prices.length < 2) return { symbol, pts: [], localMax: 1 }
         const base = entry.prices[0].close
-        const pts = entry.prices.map((bar) => {
+        const rowMagnitudes: number[] = []
+        const lastPriceIndex = entry.prices.length - 1
+        const pts = entry.prices.map((bar, index) => {
           const v = ((bar.close - base) / base) * 100 - (benchPct.get(bar.date) ?? 0)
-          magnitudes.push(Math.abs(v))
-          return { xf: dateFrac.get(bar.date) ?? 0, close: bar.close, v }
+          const magnitude = Math.abs(v)
+          rowMagnitudes.push(magnitude)
+          magnitudes.push(magnitude)
+          return {
+            xf: dateFrac.get(bar.date) ?? 0,
+            localXf: lastPriceIndex > 0 ? index / lastPriceIndex : 0,
+            close: bar.close,
+            v,
+          }
         })
-        return { symbol, pts }
+        rowMagnitudes.sort((a, b) => a - b)
+        const localMax =
+          rowMagnitudes.length > 0 ? rowMagnitudes[Math.floor(0.98 * (rowMagnitudes.length - 1))] : 1
+        return { symbol, pts, localMax: localMax || 1 }
       })
       rows.sort((a, b) => (b.pts.at(-1)?.v ?? -Infinity) - (a.pts.at(-1)?.v ?? -Infinity))
       return { sector, rows }
@@ -241,7 +253,10 @@ function Dashboard() {
   const [period, setPeriod] = useState<Period>('1d')
   const [benchmark, setBenchmark] = useState<string>('none')
   const [editing, setEditing] = useState(false)
-  const [scrub, setScrub] = useState<number | null>(null)
+  const [ranked, setRanked] = useState(false)
+  const [scaleMode, setScaleMode] = useState<ScaleMode>('fibonacci')
+  const [domainMode, setDomainMode] = useState<DomainMode>('global')
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null)
   const [addError, setAddError] = useState('')
   const { ref: listRef, width: listWidth } = useContainerWidth()
 
@@ -266,8 +281,17 @@ function Dashboard() {
     [symbols, benchmark],
   )
 
-  const chartWidth = Math.max(0, listWidth - NON_CHART_WIDTH)
-  const points = chartWidth > 0 ? Math.min(800, Math.max(160, Math.round(chartWidth / 20) * 20)) : 0
+  const rowChromeWidth =
+    typeof window !== 'undefined' && window.innerWidth >= 520
+      ? NON_CHART_WIDTH_DESKTOP
+      : NON_CHART_WIDTH_MOBILE
+  const chartWidth = Math.max(0, listWidth - rowChromeWidth)
+  const points =
+    period === 'max'
+      ? 100
+      : chartWidth > 0
+        ? Math.min(800, Math.max(160, Math.round(chartWidth / 20) * 20))
+        : 0
 
   const prices = useQuery({
     queryKey: ['prices', period, points, fetchSymbols.join(',')],
@@ -306,19 +330,43 @@ function Dashboard() {
     () => buildModel(watchlist.data, prices.data, benchmark),
     [watchlist.data, prices.data, benchmark],
   )
+  const displaySections = useMemo(() => {
+    if (!ranked) return sections
+    return [
+      {
+        sector: '__ranked__',
+        rows: sections
+          .flatMap((section) => section.rows)
+          .sort((a, b) => (b.pts.at(-1)?.v ?? -Infinity) - (a.pts.at(-1)?.v ?? -Infinity)),
+      },
+    ]
+  }, [ranked, sections])
 
   const scrubRaf = useRef(0)
-  const handleScrub = useCallback((frac: number | null) => {
-    cancelAnimationFrame(scrubRaf.current)
-    if (frac == null) {
-      setScrub(null)
-      return
-    }
-    scrubRaf.current = requestAnimationFrame(() => setScrub(frac))
-  }, [])
+  const handleScrub = useCallback(
+    (frac: number | null) => {
+      cancelAnimationFrame(scrubRaf.current)
+      if (frac == null || dates.length === 0) {
+        setScrubIndex(null)
+        return
+      }
+      const nextIndex = Math.max(0, Math.min(dates.length - 1, Math.round(frac * (dates.length - 1))))
+      scrubRaf.current = requestAnimationFrame(() => setScrubIndex(nextIndex))
+    },
+    [dates.length],
+  )
 
-  const scrubDate =
-    scrub != null && dates.length > 1 ? dates[Math.round(scrub * (dates.length - 1))] : null
+  useEffect(() => {
+    setScrubIndex(null)
+  }, [period, benchmark, dates.length])
+
+  useEffect(() => () => cancelAnimationFrame(scrubRaf.current), [])
+
+  const scrubFrac =
+    scrubIndex != null && dates.length > 1 ? scrubIndex / (dates.length - 1) : null
+  const scrubDate = domainMode === 'global' && scrubIndex != null ? (dates[scrubIndex] ?? null) : null
+  const scrubProgress =
+    domainMode === 'local' && scrubFrac != null ? `${Math.round(scrubFrac * 100)}%` : ''
 
   const fmtPct = useCallback(
     (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(period === '1d' ? 2 : 1)}%`,
@@ -403,6 +451,14 @@ function Dashboard() {
         )}
         <button
           type="button"
+          className="rank-toggle"
+          aria-pressed={ranked}
+          onClick={() => setRanked((value) => !value)}
+        >
+          Rank
+        </button>
+        <button
+          type="button"
           className="edit-toggle"
           aria-pressed={editing}
           onClick={() => setEditing((value) => !value)}
@@ -413,24 +469,28 @@ function Dashboard() {
 
       {range && (
         <div className="ruler">
-          <span>{fmtDate(range.start, period)}</span>
-          <span className="ruler-scrub">{scrubDate ? fmtDate(scrubDate, period) : ''}</span>
-          <span>{fmtDate(range.end, period)}</span>
+          <span>{domainMode === 'local' ? 'Row start' : fmtDate(range.start, period)}</span>
+          <span className="ruler-scrub">
+            {domainMode === 'local' ? scrubProgress : scrubDate ? fmtDate(scrubDate, period) : ''}
+          </span>
+          <span>{domainMode === 'local' ? 'Latest' : fmtDate(range.end, period)}</span>
         </div>
       )}
 
       <main ref={listRef}>
-        {sections.map((section) => (
+        {displaySections.map((section) => (
           <section key={section.sector} className="sector">
-            <h2>{SECTOR_LABELS[section.sector] ?? section.sector}</h2>
+            {!ranked && <h2>{SECTOR_LABELS[section.sector] ?? section.sector}</h2>}
             {section.rows.map((row) => (
               <HorizonRow
                 key={row.symbol}
                 symbol={row.symbol}
                 pts={row.pts}
                 width={chartWidth}
-                max={globalMax}
-                scrubFrac={scrub}
+                max={domainMode === 'global' ? globalMax : row.localMax}
+                scaleMode={scaleMode}
+                xDomainMode={domainMode}
+                scrubFrac={scrubFrac}
                 onScrub={handleScrub}
                 editing={editing}
                 onRemove={() => removeStock.mutate(row.symbol)}
@@ -449,6 +509,29 @@ function Dashboard() {
           </div>
         )}
       </main>
+
+      <section className="advanced" aria-label="Chart settings">
+        <label>
+          <span>Scale</span>
+          <select
+            value={scaleMode}
+            onChange={(event) => setScaleMode(event.target.value as ScaleMode)}
+          >
+            <option value="fibonacci">Fibonacci bands</option>
+            <option value="normal">Normal</option>
+          </select>
+        </label>
+        <label>
+          <span>Domain</span>
+          <select
+            value={domainMode}
+            onChange={(event) => setDomainMode(event.target.value as DomainMode)}
+          >
+            <option value="global">Global</option>
+            <option value="local">Local per stock</option>
+          </select>
+        </label>
+      </section>
 
       <form className="add" onSubmit={handleAdd}>
         <input
