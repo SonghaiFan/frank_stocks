@@ -30,6 +30,8 @@ type HorizonRowProps = {
   xDomainMode: XDomainMode
   selectedRange: SelectedRange | null
   onRangeChange: (range: SelectedRange | null) => void
+  hoverFrac: number | null
+  onHoverChange: (frac: number | null) => void
   editing: boolean
   onRemove: () => void
   fmtPct: (v: number) => string
@@ -54,6 +56,10 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
 }
 
+function fmtMoney(value: number) {
+  return `$${value >= 1000 ? value.toFixed(0) : value.toFixed(2)}`
+}
+
 export const HorizonRow = memo(function HorizonRow({
   symbol,
   pts,
@@ -63,6 +69,8 @@ export const HorizonRow = memo(function HorizonRow({
   xDomainMode,
   selectedRange,
   onRangeChange,
+  hoverFrac,
+  onHoverChange,
   editing,
   onRemove,
   fmtPct,
@@ -122,7 +130,11 @@ export const HorizonRow = memo(function HorizonRow({
     return ((endPoint.close - startPoint.close) / startPoint.close) * 100
   }, [selectedRange, hasData, pts, xDomainMode])
 
-  const shown = hasData ? pts[pts.length - 1] : null
+  const active = useMemo(() => {
+    if (hoverFrac == null || !hasData) return null
+    return nearestPoint(hoverFrac)
+  }, [hoverFrac, hasData, pts, xDomainMode])
+  const shown = active ?? (hasData ? pts[pts.length - 1] : null)
   const displayValue = rangeReadout ?? shown?.v ?? 0
   const displayClass = displayValue >= 0 ? 'pos' : 'neg'
   const rangeStart = selectedRange ? Math.min(selectedRange.start, selectedRange.end) : null
@@ -140,6 +152,7 @@ export const HorizonRow = memo(function HorizonRow({
   const beginRange = (e: React.PointerEvent<HTMLDivElement>) => {
     const frac = fracFromEvent(e)
     if (frac == null) return
+    onHoverChange(null)
     if (rangeStart != null && rangeEnd != null && frac >= rangeStart && frac <= rangeEnd) {
       dragState.current = {
         mode: 'move',
@@ -156,9 +169,12 @@ export const HorizonRow = memo(function HorizonRow({
 
   const updateRange = (e: React.PointerEvent<HTMLDivElement>) => {
     const state = dragState.current
-    if (!state) return
     const frac = fracFromEvent(e)
     if (frac == null) return
+    if (!state) {
+      if (e.pointerType === 'mouse') onHoverChange(frac)
+      return
+    }
     if (state.mode === 'create') {
       if (Math.abs(frac - state.start) >= MIN_RANGE_FRACTION) {
         onRangeChange({ start: state.start, end: frac })
@@ -201,6 +217,10 @@ export const HorizonRow = memo(function HorizonRow({
           const state = dragState.current
           dragState.current = null
           if (state?.mode === 'create') onRangeChange(null)
+          onHoverChange(null)
+        }}
+        onPointerLeave={() => {
+          if (!dragState.current) onHoverChange(null)
         }}
       >
         {hasData ? (
@@ -239,6 +259,15 @@ export const HorizonRow = memo(function HorizonRow({
                 />
               </>
             )}
+            {hoverFrac != null && (
+              <line
+                className="hover-marker"
+                x1={hoverFrac * width}
+                x2={hoverFrac * width}
+                y1={0}
+                y2={H}
+              />
+            )}
           </svg>
         ) : (
           <span className="nodata">no data</span>
@@ -251,7 +280,11 @@ export const HorizonRow = memo(function HorizonRow({
       ) : shown ? (
         <span className={`row-pct ${displayClass}`}>
           <AnimatedNumber value={displayValue} formatter={fmtPct} />
-          {rangeReadout != null && <small>range</small>}
+          {rangeReadout != null ? (
+            <small>range</small>
+          ) : active ? (
+            <AnimatedNumber value={active.close} formatter={fmtMoney} className="row-price" />
+          ) : null}
         </span>
       ) : (
         <span className="row-pct">—</span>

@@ -267,6 +267,7 @@ function Dashboard() {
   const [scaleMode, setScaleMode] = useState<ScaleMode>('fibonacci')
   const [domainMode, setDomainMode] = useState<DomainMode>('global')
   const [selectedRange, setSelectedRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoverFrac, setHoverFrac] = useState<number | null>(null)
   const [addError, setAddError] = useState('')
   const { ref: listRef, width: listWidth } = useContainerWidth()
 
@@ -354,6 +355,7 @@ function Dashboard() {
 
   useEffect(() => {
     setSelectedRange(null)
+    setHoverFrac(null)
   }, [period, benchmark, dates.length, domainMode])
 
   const rangeLabel = (() => {
@@ -364,6 +366,12 @@ function Dashboard() {
     const startIndex = Math.max(0, Math.min(dates.length - 1, Math.round(start * (dates.length - 1))))
     const endIndex = Math.max(0, Math.min(dates.length - 1, Math.round(end * (dates.length - 1))))
     return `${fmtDate(dates[startIndex], period)} – ${fmtDate(dates[endIndex], period)}`
+  })()
+  const hoverLabel = (() => {
+    if (selectedRange || hoverFrac == null) return ''
+    if (domainMode === 'local' || dates.length < 2) return `${Math.round(hoverFrac * 100)}%`
+    const index = Math.max(0, Math.min(dates.length - 1, Math.round(hoverFrac * (dates.length - 1))))
+    return fmtDate(dates[index], period)
   })()
 
   const fmtPct = useCallback(
@@ -470,7 +478,7 @@ function Dashboard() {
       {range && (
         <div className="ruler">
           <span>{domainMode === 'local' ? 'Row start' : fmtDate(range.start, period)}</span>
-          <span className="ruler-scrub">{rangeLabel}</span>
+          <span className="ruler-scrub">{rangeLabel || hoverLabel}</span>
           <span>{domainMode === 'local' ? 'Latest' : fmtDate(range.end, period)}</span>
         </div>
       )}
@@ -490,6 +498,8 @@ function Dashboard() {
                 xDomainMode={domainMode}
                 selectedRange={selectedRange}
                 onRangeChange={setSelectedRange}
+                hoverFrac={hoverFrac}
+                onHoverChange={setHoverFrac}
                 editing={editing}
                 onRemove={() => removeStock.mutate(row.symbol)}
                 fmtPct={fmtPct}

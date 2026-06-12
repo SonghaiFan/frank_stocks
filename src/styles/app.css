@@ -328,6 +328,14 @@ button {
   pointer-events: none;
 }
 
+.hover-marker {
+  stroke: var(--ink);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 .strip .nodata {
   position: absolute;
   inset: 0;
@@ -349,6 +357,12 @@ button {
 }
 
 .row-pct small {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.row-price {
   font-size: 9px;
   font-weight: 400;
   color: var(--muted);
