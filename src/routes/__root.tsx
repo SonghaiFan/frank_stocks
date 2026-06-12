@@ -25,23 +25,7 @@ export const Route = createRootRoute({
         content: 'A TanStack Start stock watchlist and horizon-style return dashboard.',
       },
     ],
-    links: [
-      { rel: 'stylesheet', href: appCss },
-      { rel: 'stylesheet', href: '/stock-dashboard.css' },
-      {
-        rel: 'preconnect',
-        href: 'https://fonts.googleapis.com',
-      },
-      {
-        rel: 'preconnect',
-        href: 'https://fonts.gstatic.com',
-        crossOrigin: 'anonymous',
-      },
-      {
-        rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
-      },
-    ],
+    links: [{ rel: 'stylesheet', href: appCss }],
   }),
   errorComponent: DefaultCatchBoundary,
   notFoundComponent: () => <NotFound />,
@@ -50,7 +34,7 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>

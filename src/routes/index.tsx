@@ -1,155 +1,482 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { QueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
-
-type CachedApiResult = {
-  data: unknown
-  stale: boolean
-  updatedAt: number
-}
-
-declare global {
-  interface Window {
-    __stocksQueryFetch?: (path: string, opts?: RequestInit & { force?: boolean }) => Promise<unknown>
-    __stocksGetCachedApi?: (path: string) => CachedApiResult | null
-  }
-}
+import {
+  QueryClient,
+  QueryClientProvider,
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { HorizonRow } from '~/components/HorizonRow'
+import type { RowPoint } from '~/components/HorizonRow'
 
 export const Route = createFileRoute('/')({
-  component: StockDashboard,
+  component: StockApp,
 })
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      gcTime: 15 * 60_000,
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-})
+type Watchlist = Record<string, string[]>
+type PriceBar = { date: string; close: number; ts?: number }
+type PriceSeries = { symbol: string; prices?: PriceBar[]; error?: string }
+type MarketStatus = { open: boolean; time_et: string; weekday: string }
 
-function apiStaleTime(path: string) {
-  if (path.startsWith('/market_status')) return 20_000
-  if (path.startsWith('/watchlist')) return 5 * 60_000
-  if (path.includes('period=1d')) return 20_000
-  if (path.includes('period=5d')) return 90_000
-  if (path.includes('period=1mo')) return 10 * 60_000
+const PERIODS = [
+  { key: '1d', label: '1D' },
+  { key: '5d', label: '5D' },
+  { key: '1mo', label: '1M' },
+  { key: '3mo', label: '3M' },
+  { key: '6mo', label: '6M' },
+  { key: '1y', label: '1Y' },
+  { key: '5y', label: '5Y' },
+  { key: 'max', label: 'MAX' },
+] as const
+
+type Period = (typeof PERIODS)[number]['key']
+
+const BENCHMARKS = [
+  { key: 'none', label: 'No benchmark' },
+  { key: '^GSPC', label: 'vs S&P 500' },
+  { key: '^IXIC', label: 'vs Nasdaq' },
+  { key: '^DJI', label: 'vs Dow' },
+] as const
+
+const SECTOR_LABELS: Record<string, string> = {
+  'AI Models': 'AI Models',
+  'AI Apps': 'AI Apps',
+  'Chips Compute': 'Chips · Compute',
+  'Chips Memory': 'Chips · Memory',
+  'Chips Equipment': 'Chips · Equipment',
+  'DC Infra': 'DC Infrastructure',
+  Cloud: 'Cloud & CDN',
+  Nuclear: 'Nuclear Power',
+  'Grid & Renewables': 'Grid & Renewables',
+  'Oil & Gas': 'Oil & Gas',
+  Autonomy: 'Autonomy & Robotics',
+  Defense: 'Defense & Space',
+  BioHealth: 'Biotech & Health AI',
+  Fintech: 'Fintech & Payments',
+  Consumer: 'Consumer & Media',
+}
+
+const DEFAULT_SECTORS = Object.keys(SECTOR_LABELS)
+
+// Row grid: 54px symbol + 74px value + two 10px gaps (see app.css .row)
+const NON_CHART_WIDTH = 54 + 74 + 20
+
+async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
+  const body = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(body?.error || response.statusText)
+  return body as T
+}
+
+function priceStaleTime(period: Period) {
+  if (period === '1d') return 20_000
+  if (period === '5d') return 90_000
+  if (period === '1mo') return 10 * 60_000
+  if (period === '3mo') return 30 * 60_000
   return 6 * 60 * 60_000
 }
 
-function apiUrl(path: string) {
-  if (path.startsWith('http')) return path
-  return path.startsWith('/api') ? path : `/api${path}`
+const etTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const etDayTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const etDay = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  month: 'short',
+  day: 'numeric',
+})
+
+const utcDay = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  month: 'short',
+  day: 'numeric',
+})
+
+const utcDayYear = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+
+const utcMonthYear = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  month: 'short',
+  year: 'numeric',
+})
+
+function fmtDate(date: string, period: Period) {
+  const intraday = date.includes('T')
+  const d = intraday ? new Date(date) : new Date(`${date}T12:00:00Z`)
+  if (Number.isNaN(d.getTime())) return date
+  if (period === '1d') return intraday ? `${etTime.format(d)} ET` : etDay.format(d)
+  if (period === '5d') return intraday ? etDayTime.format(d) : etDay.format(d)
+  if (period === '5y' || period === 'max') return utcMonthYear.format(d)
+  if (intraday) return etDay.format(d)
+  if (period === '6mo' || period === '1y') return utcDayYear.format(d)
+  return utcDay.format(d)
 }
 
-function queryKey(path: string) {
-  return ['stocks-api', path] as const
-}
-
-function installQueryBridge() {
-  if (typeof window === 'undefined') return
-  document.documentElement.dataset.stocksQueryBridge = 'ready'
-
-  window.__stocksGetCachedApi = (path) => {
-    const state = queryClient.getQueryState(queryKey(path))
-    const data = queryClient.getQueryData(queryKey(path))
-    if (!state || data === undefined) return null
-
-    return {
-      data,
-      stale: Date.now() - state.dataUpdatedAt > apiStaleTime(path),
-      updatedAt: state.dataUpdatedAt,
-    }
-  }
-
-  window.__stocksQueryFetch = async (path, opts = {}) => {
-    const currentCount = Number(document.documentElement.dataset.stocksQueryFetches || 0)
-    document.documentElement.dataset.stocksQueryFetches = String(currentCount + 1)
-    const method = (opts.method || 'GET').toUpperCase()
-    const url = apiUrl(path)
-
-    if (method !== 'GET') {
-      const response = await fetch(url, opts)
-      const body = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(body?.error || response.statusText)
-      queryClient.removeQueries({ queryKey: ['stocks-api'] })
-      return body
-    }
-
-    const staleTime = opts.force ? 0 : apiStaleTime(path)
-    return queryClient.fetchQuery({
-      queryKey: queryKey(path),
-      staleTime,
-      queryFn: async ({ signal }) => {
-        const response = await fetch(url, {
-          signal: opts.signal || signal,
-        })
-        const body = await response.json().catch(() => null)
-        if (!response.ok) throw new Error(body?.error || response.statusText)
-        return body
-      },
-    })
-  }
-}
-
-installQueryBridge()
-
-function StockDashboard() {
-  const [html, setHtml] = useState('')
-  const booted = useRef(false)
+/** Measures the list width so every row shares one chart width. */
+function useContainerWidth() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
 
   useEffect(() => {
-    installQueryBridge()
-
-    let cancelled = false
-
-    fetch('/stock-dashboard-body.html')
-      .then((response) => response.text())
-      .then((bodyHtml) => {
-        if (!cancelled) setHtml(bodyHtml)
-      })
-
-    return () => {
-      cancelled = true
-    }
+    const el = ref.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const next = Math.round(entries[0].contentRect.width)
+      setWidth((prev) => (Math.abs(prev - next) > 4 ? next : prev))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
 
-  useEffect(() => {
-    if (!html || booted.current) return
-    booted.current = true
+  return { ref, width }
+}
 
-    const loadScript = (id: string, src: string) =>
-      new Promise<void>((resolve, reject) => {
-        const existing = document.getElementById(id) as HTMLScriptElement | null
-        if (existing) {
-          if (existing.dataset.loaded === 'true') resolve()
-          else existing.addEventListener('load', () => resolve(), { once: true })
-          return
+type SectionRow = { symbol: string; pts: RowPoint[] }
+type Section = { sector: string; rows: SectionRow[] }
+
+function buildModel(watchlist: Watchlist | undefined, series: PriceSeries[] | undefined, benchmark: string) {
+  const bySymbol = new Map((series ?? []).map((s) => [s.symbol, s]))
+
+  const benchPct = new Map<string, number>()
+  if (benchmark !== 'none') {
+    const bench = bySymbol.get(benchmark)
+    if (bench?.prices && bench.prices.length > 1) {
+      const base = bench.prices[0].close
+      for (const bar of bench.prices) {
+        benchPct.set(bar.date, ((bar.close - base) / base) * 100)
+      }
+    }
+  }
+
+  // Shared time axis: the union of every bar date, so the scrub crosshair is
+  // temporal and stocks with shorter histories start partway into the strip.
+  const watchSymbols = new Set(Object.values(watchlist ?? {}).flat())
+  const dateSet = new Set<string>()
+  for (const s of series ?? []) {
+    if (!watchSymbols.has(s.symbol)) continue
+    for (const bar of s.prices ?? []) dateSet.add(bar.date)
+  }
+  const dates = Array.from(dateSet).sort()
+  const dateFrac = new Map(dates.map((date, i) => [date, dates.length > 1 ? i / (dates.length - 1) : 0]))
+
+  const magnitudes: number[] = []
+  const sections: Section[] = Object.entries(watchlist ?? {})
+    .map(([sector, symbols]) => {
+      const rows = symbols.map((symbol): SectionRow => {
+        const entry = bySymbol.get(symbol)
+        if (!entry?.prices || entry.prices.length < 2) return { symbol, pts: [] }
+        const base = entry.prices[0].close
+        const pts = entry.prices.map((bar) => {
+          const v = ((bar.close - base) / base) * 100 - (benchPct.get(bar.date) ?? 0)
+          magnitudes.push(Math.abs(v))
+          return { xf: dateFrac.get(bar.date) ?? 0, close: bar.close, v }
+        })
+        return { symbol, pts }
+      })
+      rows.sort((a, b) => (b.pts.at(-1)?.v ?? -Infinity) - (a.pts.at(-1)?.v ?? -Infinity))
+      return { sector, rows }
+    })
+    .filter((section) => section.rows.length > 0)
+
+  // Shared y-domain at the 98th percentile of all |returns|: comparable across
+  // rows, but a single outlier can't flatten everyone else's bands.
+  magnitudes.sort((a, b) => a - b)
+  const globalMax = magnitudes.length > 0 ? magnitudes[Math.floor(0.98 * (magnitudes.length - 1))] : 0
+
+  const returns = sections
+    .flatMap((section) => section.rows)
+    .filter((row) => row.pts.length >= 2)
+    .map((row) => ({ symbol: row.symbol, v: row.pts[row.pts.length - 1].v }))
+
+  const stats =
+    returns.length === 0
+      ? null
+      : {
+          avg: returns.reduce((sum, r) => sum + r.v, 0) / returns.length,
+          best: returns.reduce((a, b) => (b.v > a.v ? b : a)),
+          worst: returns.reduce((a, b) => (b.v < a.v ? b : a)),
         }
 
-        const script = document.createElement('script')
-        script.id = id
-        script.src = src
-        script.async = false
-        script.addEventListener('load', () => {
-          script.dataset.loaded = 'true'
-          resolve()
-        })
-        script.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)))
-        document.body.appendChild(script)
-      })
+  const range = dates.length > 1 ? { start: dates[0], end: dates[dates.length - 1] } : null
 
-    installQueryBridge()
+  return { sections, dates, globalMax: globalMax || 1, stats, range }
+}
 
-    loadScript('stocks-d3', 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js')
-      .then(() => loadScript('stocks-lucide', 'https://unpkg.com/lucide@latest'))
-      .then(() => loadScript('stock-dashboard-app', '/stock-dashboard-app.js'))
-      .catch((error) => {
-        console.error(error)
-      })
-  }, [html])
+function StockApp() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: 1, gcTime: 15 * 60_000 },
+        },
+      }),
+  )
+  return (
+    <QueryClientProvider client={client}>
+      <Dashboard />
+    </QueryClientProvider>
+  )
+}
 
-  return <div dangerouslySetInnerHTML={{ __html: html }} />
+function Dashboard() {
+  const queryClient = useQueryClient()
+  const [period, setPeriod] = useState<Period>('1d')
+  const [benchmark, setBenchmark] = useState<string>('none')
+  const [editing, setEditing] = useState(false)
+  const [scrub, setScrub] = useState<number | null>(null)
+  const [addError, setAddError] = useState('')
+  const { ref: listRef, width: listWidth } = useContainerWidth()
+
+  const watchlist = useQuery({
+    queryKey: ['watchlist'],
+    queryFn: () => getJson<Watchlist>('/api/watchlist'),
+    staleTime: 5 * 60_000,
+  })
+
+  const market = useQuery({
+    queryKey: ['market'],
+    queryFn: () => getJson<MarketStatus>('/api/market_status'),
+    refetchInterval: 60_000,
+  })
+
+  const symbols = useMemo(
+    () => Array.from(new Set(Object.values(watchlist.data ?? {}).flat())),
+    [watchlist.data],
+  )
+  const fetchSymbols = useMemo(
+    () => (benchmark === 'none' || symbols.includes(benchmark) ? symbols : [...symbols, benchmark]),
+    [symbols, benchmark],
+  )
+
+  const chartWidth = Math.max(0, listWidth - NON_CHART_WIDTH)
+  const points = chartWidth > 0 ? Math.min(800, Math.max(160, Math.round(chartWidth / 20) * 20)) : 0
+
+  const prices = useQuery({
+    queryKey: ['prices', period, points, fetchSymbols.join(',')],
+    enabled: fetchSymbols.length > 0 && points > 0,
+    queryFn: ({ signal }) =>
+      getJson<PriceSeries[]>(
+        `/api/prices?symbols=${encodeURIComponent(fetchSymbols.join(','))}&period=${period}&points=${points}`,
+        { signal },
+      ),
+    staleTime: priceStaleTime(period),
+    refetchInterval: period === '1d' ? 60_000 : false,
+    placeholderData: keepPreviousData,
+  })
+
+  const addStock = useMutation({
+    mutationFn: ({ symbol, sector }: { symbol: string; sector: string }) =>
+      getJson<Watchlist>('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, sector }),
+      }),
+    onSuccess: (data) => {
+      setAddError('')
+      queryClient.setQueryData(['watchlist'], data)
+    },
+    onError: (error) => setAddError(error.message),
+  })
+
+  const removeStock = useMutation({
+    mutationFn: (symbol: string) =>
+      getJson<Watchlist>(`/api/watchlist/${encodeURIComponent(symbol)}`, { method: 'DELETE' }),
+    onSuccess: (data) => queryClient.setQueryData(['watchlist'], data),
+  })
+
+  const { sections, dates, globalMax, stats, range } = useMemo(
+    () => buildModel(watchlist.data, prices.data, benchmark),
+    [watchlist.data, prices.data, benchmark],
+  )
+
+  const scrubRaf = useRef(0)
+  const handleScrub = useCallback((frac: number | null) => {
+    cancelAnimationFrame(scrubRaf.current)
+    if (frac == null) {
+      setScrub(null)
+      return
+    }
+    scrubRaf.current = requestAnimationFrame(() => setScrub(frac))
+  }, [])
+
+  const scrubDate =
+    scrub != null && dates.length > 1 ? dates[Math.round(scrub * (dates.length - 1))] : null
+
+  const fmtPct = useCallback(
+    (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(period === '1d' ? 2 : 1)}%`,
+    [period],
+  )
+
+  const handleAdd = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const symbol = String(data.get('symbol') ?? '').trim().toUpperCase()
+    const sector = String(data.get('sector') ?? DEFAULT_SECTORS[0])
+    if (!symbol) return
+    addStock.mutate(
+      { symbol, sector },
+      { onSuccess: () => form.reset() },
+    )
+  }
+
+  const sectors = watchlist.data ? Object.keys(watchlist.data) : DEFAULT_SECTORS
+  const benchmarkActive = benchmark !== 'none'
+
+  return (
+    <div className="app">
+      <header className="masthead">
+        <h1>Frank Stocks</h1>
+        <div className={market.data?.open ? 'market live' : 'market'}>
+          <span className="dot" />
+          {market.data ? (market.data.open ? `${market.data.time_et.slice(0, 5)} ET` : 'Closed') : '—'}
+        </div>
+      </header>
+
+      <nav className="controls">
+        <div className="periods">
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              aria-pressed={period === p.key}
+              onClick={() => setPeriod(p.key)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <select
+          className="bench"
+          value={benchmark}
+          onChange={(event) => setBenchmark(event.target.value)}
+          aria-label="Benchmark"
+        >
+          {BENCHMARKS.map((b) => (
+            <option key={b.key} value={b.key}>
+              {b.label}
+            </option>
+          ))}
+        </select>
+      </nav>
+
+      <section className="summary">
+        {stats ? (
+          <>
+            <div className="summary-item">
+              <span>{benchmarkActive ? 'Avg excess' : 'Avg'}</span>
+              <strong className={stats.avg >= 0 ? 'pos' : 'neg'}>{fmtPct(stats.avg)}</strong>
+            </div>
+            <div className="summary-item">
+              <span>Best</span>
+              <strong className="pos">
+                {stats.best.symbol} {fmtPct(stats.best.v)}
+              </strong>
+            </div>
+            <div className="summary-item">
+              <span>Worst</span>
+              <strong className="neg">
+                {stats.worst.symbol} {fmtPct(stats.worst.v)}
+              </strong>
+            </div>
+          </>
+        ) : (
+          <div className="muted">{prices.isPending && fetchSymbols.length > 0 ? 'Loading prices…' : 'No data yet'}</div>
+        )}
+        <button
+          type="button"
+          className="edit-toggle"
+          aria-pressed={editing}
+          onClick={() => setEditing((value) => !value)}
+        >
+          {editing ? 'Done' : 'Edit'}
+        </button>
+      </section>
+
+      {range && (
+        <div className="ruler">
+          <span>{fmtDate(range.start, period)}</span>
+          <span className="ruler-scrub">{scrubDate ? fmtDate(scrubDate, period) : ''}</span>
+          <span>{fmtDate(range.end, period)}</span>
+        </div>
+      )}
+
+      <main ref={listRef}>
+        {sections.map((section) => (
+          <section key={section.sector} className="sector">
+            <h2>{SECTOR_LABELS[section.sector] ?? section.sector}</h2>
+            {section.rows.map((row) => (
+              <HorizonRow
+                key={row.symbol}
+                symbol={row.symbol}
+                pts={row.pts}
+                width={chartWidth}
+                max={globalMax}
+                scrubFrac={scrub}
+                onScrub={handleScrub}
+                editing={editing}
+                onRemove={() => removeStock.mutate(row.symbol)}
+                fmtPct={fmtPct}
+              />
+            ))}
+          </section>
+        ))}
+
+        {prices.isError && (
+          <div className="notice">
+            Couldn’t load prices.
+            <button type="button" onClick={() => prices.refetch()}>
+              Retry
+            </button>
+          </div>
+        )}
+      </main>
+
+      <form className="add" onSubmit={handleAdd}>
+        <input
+          name="symbol"
+          placeholder="Add ticker"
+          maxLength={10}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+        />
+        <select name="sector" aria-label="Sector" defaultValue={DEFAULT_SECTORS[0]}>
+          {sectors.map((sector) => (
+            <option key={sector} value={sector}>
+              {SECTOR_LABELS[sector] ?? sector}
+            </option>
+          ))}
+        </select>
+        <button type="submit" disabled={addStock.isPending}>
+          Add
+        </button>
+      </form>
+      {addError && <p className="form-error">{addError}</p>}
+
+      <footer className="colophon">
+        Horizon chart — each strip is % return vs the period start. Darker bands mean a larger
+        move; green is up, red is down. Touch or hover a strip to read values across all stocks.
+        Data: Yahoo Finance.
+      </footer>
+    </div>
+  )
 }

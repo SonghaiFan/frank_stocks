@@ -17,18 +17,6 @@ export type PriceSeries = {
   error?: string
 }
 
-export type Quote = {
-  symbol: string
-  price?: number
-  open?: number
-  change?: number
-  pct_change?: number
-  ts?: number
-  time_et?: string
-  bar?: PriceBar
-  error?: string
-}
-
 type YahooChartQuote = {
   date: Date
   open?: number | null
@@ -44,14 +32,14 @@ type CacheEnvelope<T> = {
   expiresAt: number
 }
 
-const rootDir = process.cwd()
-const watchlistFile = path.join(rootDir, 'watchlist.json')
-const cacheFile = path.join(rootDir, 'price_cache.json')
-const priceCacheVersion = 'v5'
+// Vercel's serverless filesystem is read-only except /tmp, so persisted JSON
+// lives there in production (per warm instance) and in the repo root locally.
+const dataDir = process.env.VERCEL ? '/tmp' : process.cwd()
+const watchlistFile = path.join(dataDir, 'watchlist.json')
+const cacheFile = path.join(dataDir, 'price_cache.json')
+const priceCacheVersion = 'v6'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
-const quoteCache = new Map<string, CacheEnvelope<Quote>>()
-const pendingQuoteRequests = new Map<string, Promise<Quote>>()
 
 const etFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/New_York',
@@ -71,13 +59,6 @@ const etClockFormatter = new Intl.DateTimeFormat('en-US', {
 const etWeekdayFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   weekday: 'long',
-})
-
-const etShortTimeFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
 })
 
 const etTradePartFormatter = new Intl.DateTimeFormat('en-US', {
@@ -207,10 +188,6 @@ export async function loadWatchlist(): Promise<Watchlist> {
   return structuredClone(defaultWatchlist)
 }
 
-export async function saveWatchlist(watchlist: Watchlist) {
-  await writeJson(watchlistFile, watchlist)
-}
-
 export async function addSymbol(symbol: string, sector: string) {
   const normalized = normalizeSymbol(symbol)
   const targetSector = sector.trim() || 'AI Models'
@@ -260,12 +237,6 @@ async function loadCache(): Promise<{ date: string; data: Record<string, PriceBa
   }
 
   return { date: todayEt(), data: {} }
-}
-
-async function setCachedPrices(symbol: string, period: string, prices: PriceBar[]) {
-  const cache = await loadCache()
-  cache.data[`${symbol}|${period}`] = prices
-  await writeJson(cacheFile, cache)
 }
 
 export function getInterval(period: string, target?: number) {
@@ -332,7 +303,9 @@ function periodStart(period: string) {
   const now = new Date()
   const start = new Date(now)
 
-  if (period === '1d') start.setDate(now.getDate() - 1)
+  // '1d' shows the latest trading session; fetch a few days back so weekends
+  // and pre-market hours still resolve to the most recent session.
+  if (period === '1d') start.setDate(now.getDate() - 5)
   else if (period === '5d') start.setDate(now.getDate() - 10)
   else if (period === '1mo') start.setMonth(now.getMonth() - 1)
   else if (period === '3mo') start.setMonth(now.getMonth() - 3)
@@ -411,6 +384,20 @@ function roundPrice(value: number) {
   return Math.round(value * 10000) / 10000
 }
 
+// Yahoo intraday feeds occasionally emit isolated bad ticks (e.g. a missing
+// decimal turns 241.16 into 2411.6). Drop bars that jump >2.5x against both
+// neighbours; genuine moves and split-level shifts only jump on one side.
+function despikeQuotes(quotes: YahooChartQuote[]) {
+  return quotes.filter((quote, index) => {
+    const close = quote.close as number
+    const prev = (quotes[index - 1]?.close ?? quotes[index + 1]?.close) as number | undefined
+    const next = (quotes[index + 1]?.close ?? quotes[index - 1]?.close) as number | undefined
+    if (!prev || !next || close <= 0) return true
+    const isSpike = (ratio: number) => ratio > 2.5 || ratio < 0.4
+    return !(isSpike(close / prev) && isSpike(close / next))
+  })
+}
+
 export async function getPricesFromQuery(url: string) {
   const requestUrl = new URL(url)
   const symbols = (requestUrl.searchParams.get('symbols') || '')
@@ -448,12 +435,17 @@ export async function getPricesFromQuery(url: string) {
           interval,
         })
         const quotes = rows.quotes || []
-        const today = todayEt()
 
-        let filteredQuotes = quotes
-          .filter((quote: YahooChartQuote) => typeof quote.close === 'number' && quote.date instanceof Date)
-          .filter((quote: YahooChartQuote) => period !== '1d' || toDateKey(quote.date) === today)
-          .filter((quote: YahooChartQuote) => !isIntradayInterval(interval) || isRegularTradingBar(quote.date))
+        let filteredQuotes = despikeQuotes(
+          quotes
+            .filter((quote: YahooChartQuote) => typeof quote.close === 'number' && quote.date instanceof Date)
+            .filter((quote: YahooChartQuote) => !isIntradayInterval(interval) || isRegularTradingBar(quote.date)),
+        )
+
+        if (period === '1d' && filteredQuotes.length > 0) {
+          const lastDay = toDateKey(filteredQuotes[filteredQuotes.length - 1].date)
+          filteredQuotes = filteredQuotes.filter((quote: YahooChartQuote) => toDateKey(quote.date) === lastDay)
+        }
 
         if (period === '5d') {
           const tradingDays = Array.from(new Set(filteredQuotes.map((quote: YahooChartQuote) => toDateKey(quote.date)))).slice(-5)
@@ -493,80 +485,6 @@ export async function getPricesFromQuery(url: string) {
   }
 
   return result
-}
-
-export async function getQuotesFromQuery(url: string) {
-  const requestUrl = new URL(url)
-  const symbols = (requestUrl.searchParams.get('symbols') || '')
-    .split(',')
-    .map(normalizeSymbol)
-    .filter(Boolean)
-
-  if (symbols.length === 0) return []
-
-  return mapWithConcurrency(symbols, 8, async (symbol) => {
-    const cached = quoteCache.get(symbol)
-    if (cached && cached.expiresAt > Date.now()) return cached.data
-
-    const pending = pendingQuoteRequests.get(symbol)
-    if (pending) return pending
-
-    const request = (async (): Promise<Quote> => {
-      try {
-        const rows = await fetchYahooChart(symbol, {
-          period1: periodStart('1d'),
-          period2: new Date(),
-          interval: '1m',
-        })
-        const quotes = (rows.quotes || []).filter(
-          (quote: YahooChartQuote) =>
-            typeof quote.close === 'number' &&
-            typeof quote.open === 'number' &&
-            quote.date instanceof Date,
-        )
-
-        if (quotes.length === 0) {
-          return { symbol, error: 'no data' }
-        }
-
-        const first = quotes[0]
-        const last = quotes[quotes.length - 1]
-        const lastPrice = roundPrice(last.close as number)
-        const openPrice = roundPrice(first.open as number)
-        const change = roundPrice(lastPrice - openPrice)
-        const pctChange = openPrice ? roundPrice((change / openPrice) * 100) : 0
-
-        const quote = {
-          symbol,
-          price: lastPrice,
-          open: openPrice,
-          change,
-          pct_change: pctChange,
-          ts: last.date.getTime(),
-          time_et: etShortTimeFormatter.format(last.date),
-          bar: {
-            date: last.date.toISOString(),
-            close: lastPrice,
-            ts: last.date.getTime(),
-          },
-        }
-        quoteCache.set(symbol, {
-          data: quote,
-          expiresAt: Date.now() + 10_000,
-        })
-        return quote
-      } catch (error) {
-        return {
-          symbol,
-          error: error instanceof Error ? error.message : String(error),
-        }
-      }
-    })()
-
-    pendingQuoteRequests.set(symbol, request)
-    request.finally(() => pendingQuoteRequests.delete(symbol))
-    return request
-  })
 }
 
 export function getMarketStatus() {

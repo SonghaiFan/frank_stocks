@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiWatchlistRouteImport } from './routes/api/watchlist'
-import { Route as ApiQuoteRouteImport } from './routes/api/quote'
 import { Route as ApiPricesRouteImport } from './routes/api/prices'
 import { Route as ApiMarket_statusRouteImport } from './routes/api/market_status'
 import { Route as ApiWatchlistSymbolRouteImport } from './routes/api/watchlist.$symbol'
@@ -24,11 +23,6 @@ const IndexRoute = IndexRouteImport.update({
 const ApiWatchlistRoute = ApiWatchlistRouteImport.update({
   id: '/api/watchlist',
   path: '/api/watchlist',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiQuoteRoute = ApiQuoteRouteImport.update({
-  id: '/api/quote',
-  path: '/api/quote',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPricesRoute = ApiPricesRouteImport.update({
@@ -51,7 +45,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/market_status': typeof ApiMarket_statusRoute
   '/api/prices': typeof ApiPricesRoute
-  '/api/quote': typeof ApiQuoteRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/api/watchlist/$symbol': typeof ApiWatchlistSymbolRoute
 }
@@ -59,7 +52,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/market_status': typeof ApiMarket_statusRoute
   '/api/prices': typeof ApiPricesRoute
-  '/api/quote': typeof ApiQuoteRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/api/watchlist/$symbol': typeof ApiWatchlistSymbolRoute
 }
@@ -68,7 +60,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/market_status': typeof ApiMarket_statusRoute
   '/api/prices': typeof ApiPricesRoute
-  '/api/quote': typeof ApiQuoteRoute
   '/api/watchlist': typeof ApiWatchlistRouteWithChildren
   '/api/watchlist/$symbol': typeof ApiWatchlistSymbolRoute
 }
@@ -78,7 +69,6 @@ export interface FileRouteTypes {
     | '/'
     | '/api/market_status'
     | '/api/prices'
-    | '/api/quote'
     | '/api/watchlist'
     | '/api/watchlist/$symbol'
   fileRoutesByTo: FileRoutesByTo
@@ -86,7 +76,6 @@ export interface FileRouteTypes {
     | '/'
     | '/api/market_status'
     | '/api/prices'
-    | '/api/quote'
     | '/api/watchlist'
     | '/api/watchlist/$symbol'
   id:
@@ -94,7 +83,6 @@ export interface FileRouteTypes {
     | '/'
     | '/api/market_status'
     | '/api/prices'
-    | '/api/quote'
     | '/api/watchlist'
     | '/api/watchlist/$symbol'
   fileRoutesById: FileRoutesById
@@ -103,7 +91,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiMarket_statusRoute: typeof ApiMarket_statusRoute
   ApiPricesRoute: typeof ApiPricesRoute
-  ApiQuoteRoute: typeof ApiQuoteRoute
   ApiWatchlistRoute: typeof ApiWatchlistRouteWithChildren
 }
 
@@ -121,13 +108,6 @@ declare module '@tanstack/react-router' {
       path: '/api/watchlist'
       fullPath: '/api/watchlist'
       preLoaderRoute: typeof ApiWatchlistRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/quote': {
-      id: '/api/quote'
-      path: '/api/quote'
-      fullPath: '/api/quote'
-      preLoaderRoute: typeof ApiQuoteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/prices': {
@@ -170,7 +150,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiMarket_statusRoute: ApiMarket_statusRoute,
   ApiPricesRoute: ApiPricesRoute,
-  ApiQuoteRoute: ApiQuoteRoute,
   ApiWatchlistRoute: ApiWatchlistRouteWithChildren,
 }
 export const routeTree = rootRouteImport
