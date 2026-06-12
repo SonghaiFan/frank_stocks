@@ -22,9 +22,6 @@ export default defineConfig({
           runtime: 'nodejs22.x',
         },
       },
-      rollupConfig: {
-        external: ['yahoo-finance2'],
-      },
     }),
     viteReact(),
     tailwindcss(),

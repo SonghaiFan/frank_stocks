@@ -39,10 +39,6 @@ type YahooChartResult = {
   quotes?: YahooChartQuote[]
 }
 
-type YahooFinanceClient = {
-  chart: (symbol: string, options: any) => Promise<unknown>
-}
-
 type CacheEnvelope<T> = {
   data: T
   expiresAt: number
@@ -51,7 +47,6 @@ type CacheEnvelope<T> = {
 const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
-let yahooFinancePromise: Promise<YahooFinanceClient> | null = null
 const priceCacheVersion = 'v4'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
@@ -139,13 +134,45 @@ function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase()
 }
 
-async function getYahooFinance() {
-  if (!yahooFinancePromise) {
-    yahooFinancePromise = import('yahoo-finance2').then(
-      ({ default: YahooFinance }) => new YahooFinance() as YahooFinanceClient,
-    )
+async function fetchYahooChart(symbol: string, options: { period1: Date; period2: Date; interval: string }) {
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`)
+  url.searchParams.set('period1', String(Math.floor(options.period1.getTime() / 1000)))
+  url.searchParams.set('period2', String(Math.floor(options.period2.getTime() / 1000)))
+  url.searchParams.set('interval', options.interval)
+  url.searchParams.set('includePrePost', 'false')
+  url.searchParams.set('events', 'div,splits')
+
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      'user-agent': 'Mozilla/5.0 FrankStocks/1.0',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Yahoo chart request failed: ${response.status} ${response.statusText}`)
   }
-  return yahooFinancePromise
+
+  const body = await response.json()
+  const chart = body?.chart
+  const error = chart?.error
+  if (error) {
+    throw new Error(error.description || error.message || 'Yahoo chart request failed')
+  }
+
+  const result = chart?.result?.[0]
+  const timestamps = result?.timestamp || []
+  const quote = result?.indicators?.quote?.[0] || {}
+  const closes = quote.close || []
+  const opens = quote.open || []
+
+  return {
+    quotes: timestamps.map((timestamp: number, index: number) => ({
+      date: new Date(timestamp * 1000),
+      open: opens[index],
+      close: closes[index],
+    })),
+  } satisfies YahooChartResult
 }
 
 async function writeJson(file: string, value: unknown) {
@@ -398,28 +425,27 @@ export async function getPricesFromQuery(url: string) {
 
     const request = (async (): Promise<PriceSeries> => {
       try {
-        const yahooFinance = await getYahooFinance()
-        const rows = (await yahooFinance.chart(symbol, {
+        const rows = await fetchYahooChart(symbol, {
           period1: periodStart(period),
           period2: new Date(),
           interval,
-        })) as YahooChartResult
+        })
         const quotes = rows.quotes || []
         const today = todayEt()
 
         let filteredQuotes = quotes
-          .filter((quote) => typeof quote.close === 'number' && quote.date instanceof Date)
-          .filter((quote) => period !== '1d' || toDateKey(quote.date) === today)
-          .filter((quote) => !isIntradayInterval(interval) || isRegularTradingBar(quote.date))
+          .filter((quote: YahooChartQuote) => typeof quote.close === 'number' && quote.date instanceof Date)
+          .filter((quote: YahooChartQuote) => period !== '1d' || toDateKey(quote.date) === today)
+          .filter((quote: YahooChartQuote) => !isIntradayInterval(interval) || isRegularTradingBar(quote.date))
 
         if (period === '5d') {
-          const tradingDays = Array.from(new Set(filteredQuotes.map((quote) => toDateKey(quote.date)))).slice(-5)
+          const tradingDays = Array.from(new Set(filteredQuotes.map((quote: YahooChartQuote) => toDateKey(quote.date)))).slice(-5)
           const tradingDaySet = new Set(tradingDays)
-          filteredQuotes = filteredQuotes.filter((quote) => tradingDaySet.has(toDateKey(quote.date)))
+          filteredQuotes = filteredQuotes.filter((quote: YahooChartQuote) => tradingDaySet.has(toDateKey(quote.date)))
         }
 
         const prices = resamplePrices(filteredQuotes
-          .map((quote) => ({
+          .map((quote: YahooChartQuote) => ({
             date: isIntradayInterval(interval) ? quote.date.toISOString() : toDateKey(quote.date),
             close: roundPrice(quote.close as number),
             ...(isIntradayInterval(interval) ? { ts: quote.date.getTime() } : {}),
@@ -470,14 +496,13 @@ export async function getQuotesFromQuery(url: string) {
 
     const request = (async (): Promise<Quote> => {
       try {
-        const yahooFinance = await getYahooFinance()
-        const rows = (await yahooFinance.chart(symbol, {
+        const rows = await fetchYahooChart(symbol, {
           period1: periodStart('1d'),
           period2: new Date(),
           interval: '1m',
-        })) as YahooChartResult
+        })
         const quotes = (rows.quotes || []).filter(
-          (quote) =>
+          (quote: YahooChartQuote) =>
             typeof quote.close === 'number' &&
             typeof quote.open === 'number' &&
             quote.date instanceof Date,
