@@ -1,7 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import YahooFinance from 'yahoo-finance2'
 
 export type Watchlist = Record<string, string[]>
 
@@ -40,6 +39,10 @@ type YahooChartResult = {
   quotes?: YahooChartQuote[]
 }
 
+type YahooFinanceClient = {
+  chart: (symbol: string, options: any) => Promise<unknown>
+}
+
 type CacheEnvelope<T> = {
   data: T
   expiresAt: number
@@ -48,7 +51,7 @@ type CacheEnvelope<T> = {
 const rootDir = process.cwd()
 const watchlistFile = path.join(rootDir, 'watchlist.json')
 const cacheFile = path.join(rootDir, 'price_cache.json')
-const yahooFinance = new YahooFinance()
+let yahooFinancePromise: Promise<YahooFinanceClient> | null = null
 const priceCacheVersion = 'v4'
 const memoryPriceCache = new Map<string, CacheEnvelope<PriceBar[]>>()
 const pendingPriceRequests = new Map<string, Promise<PriceSeries>>()
@@ -134,6 +137,15 @@ function responseJson(data: unknown, init?: ResponseInit) {
 
 function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase()
+}
+
+async function getYahooFinance() {
+  if (!yahooFinancePromise) {
+    yahooFinancePromise = import('yahoo-finance2').then(
+      ({ default: YahooFinance }) => new YahooFinance() as YahooFinanceClient,
+    )
+  }
+  return yahooFinancePromise
 }
 
 async function writeJson(file: string, value: unknown) {
@@ -386,6 +398,7 @@ export async function getPricesFromQuery(url: string) {
 
     const request = (async (): Promise<PriceSeries> => {
       try {
+        const yahooFinance = await getYahooFinance()
         const rows = (await yahooFinance.chart(symbol, {
           period1: periodStart(period),
           period2: new Date(),
@@ -457,54 +470,55 @@ export async function getQuotesFromQuery(url: string) {
 
     const request = (async (): Promise<Quote> => {
       try {
-      const rows = (await yahooFinance.chart(symbol, {
-        period1: periodStart('1d'),
-        period2: new Date(),
-        interval: '1m',
-      })) as YahooChartResult
-      const quotes = (rows.quotes || []).filter(
-        (quote) =>
-          typeof quote.close === 'number' &&
-          typeof quote.open === 'number' &&
-          quote.date instanceof Date,
-      )
+        const yahooFinance = await getYahooFinance()
+        const rows = (await yahooFinance.chart(symbol, {
+          period1: periodStart('1d'),
+          period2: new Date(),
+          interval: '1m',
+        })) as YahooChartResult
+        const quotes = (rows.quotes || []).filter(
+          (quote) =>
+            typeof quote.close === 'number' &&
+            typeof quote.open === 'number' &&
+            quote.date instanceof Date,
+        )
 
-      if (quotes.length === 0) {
-        return { symbol, error: 'no data' }
-      }
+        if (quotes.length === 0) {
+          return { symbol, error: 'no data' }
+        }
 
-      const first = quotes[0]
-      const last = quotes[quotes.length - 1]
-      const lastPrice = roundPrice(last.close as number)
-      const openPrice = roundPrice(first.open as number)
-      const change = roundPrice(lastPrice - openPrice)
-      const pctChange = openPrice ? roundPrice((change / openPrice) * 100) : 0
+        const first = quotes[0]
+        const last = quotes[quotes.length - 1]
+        const lastPrice = roundPrice(last.close as number)
+        const openPrice = roundPrice(first.open as number)
+        const change = roundPrice(lastPrice - openPrice)
+        const pctChange = openPrice ? roundPrice((change / openPrice) * 100) : 0
 
-      const quote = {
-        symbol,
-        price: lastPrice,
-        open: openPrice,
-        change,
-        pct_change: pctChange,
-        ts: last.date.getTime(),
-        time_et: etShortTimeFormatter.format(last.date),
-        bar: {
-          date: last.date.toISOString(),
-          close: lastPrice,
+        const quote = {
+          symbol,
+          price: lastPrice,
+          open: openPrice,
+          change,
+          pct_change: pctChange,
           ts: last.date.getTime(),
-        },
+          time_et: etShortTimeFormatter.format(last.date),
+          bar: {
+            date: last.date.toISOString(),
+            close: lastPrice,
+            ts: last.date.getTime(),
+          },
+        }
+        quoteCache.set(symbol, {
+          data: quote,
+          expiresAt: Date.now() + 10_000,
+        })
+        return quote
+      } catch (error) {
+        return {
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        }
       }
-      quoteCache.set(symbol, {
-        data: quote,
-        expiresAt: Date.now() + 10_000,
-      })
-      return quote
-    } catch (error) {
-      return {
-        symbol,
-        error: error instanceof Error ? error.message : String(error),
-      }
-    }
     })()
 
     pendingQuoteRequests.set(symbol, request)
