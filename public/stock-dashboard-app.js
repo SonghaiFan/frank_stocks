@@ -722,6 +722,8 @@ function renderChart() {
 
 function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
   const container = document.getElementById("chart-area");
+  const isDesktop = window.innerWidth >= 1024;
+  const enableTooltips = isDesktop && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   let svgEl;
   if (existingSvg) {
     svgEl = existingSvg;
@@ -747,12 +749,12 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
   const padding = 0.5;
   const secHeaderHeight = 24;
 
-  const marginTop    = 18;
-  const marginRight  = 10;
+  const marginTop    = isDesktop ? 18 : 16;
+  const marginRight  = isDesktop ? 10 : 0;
   const marginBottom = 10;
-  const marginLeft   = 170;
+  const marginLeft   = isDesktop ? 170 : 0;
   const colCount = (fracEnd - fracStart < 1.0) ? 2 : 1;
-  const width  = Math.max(300, Math.floor((container.clientWidth - (colCount > 1 ? 1 : 20)) / colCount));
+  const width  = Math.max(300, Math.floor((container.clientWidth - (colCount > 1 ? 1 : 0)) / colCount));
 
   const renderItems = [];
   const sectorGroupsLayout = [];
@@ -1005,6 +1007,9 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
   svgEl.style.height   = "auto";
 
   const s = d3.select(svgEl);
+  if (!enableTooltips) {
+    tooltip.style.opacity = "0";
+  }
 
   // Global hairline guide
   const hairline = s.append("line")
@@ -1061,32 +1066,34 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       .attr("data-group-key", d => d.key)
       .attr("data-group-kind", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "sector" : "computed");
 
-  // Draw vertical line for the bracket
-  groupG.append("line")
-    .attr("x1", 15)
-    .attr("x2", 15)
-    .attr("y1", d => d.startY + 2)
-    .attr("y2", d => d.endY - 2)
-    .attr("stroke", "var(--border)")
-    .attr("stroke-width", 1.5);
+  if (isDesktop) {
+    // Draw vertical line for the bracket
+    groupG.append("line")
+      .attr("x1", 15)
+      .attr("x2", 15)
+      .attr("y1", d => d.startY + 2)
+      .attr("y2", d => d.endY - 2)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1.5);
 
-  // Draw top hook of bracket
-  groupG.append("line")
-    .attr("x1", 15)
-    .attr("x2", 20)
-    .attr("y1", d => d.startY + 2)
-    .attr("y2", d => d.startY + 2)
-    .attr("stroke", "var(--border)")
-    .attr("stroke-width", 1.5);
+    // Draw top hook of bracket
+    groupG.append("line")
+      .attr("x1", 15)
+      .attr("x2", 20)
+      .attr("y1", d => d.startY + 2)
+      .attr("y2", d => d.startY + 2)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1.5);
 
-  // Draw bottom hook of bracket
-  groupG.append("line")
-    .attr("x1", 15)
-    .attr("x2", 20)
-    .attr("y1", d => d.endY - 2)
-    .attr("y2", d => d.endY - 2)
-    .attr("stroke", "var(--border)")
-    .attr("stroke-width", 1.5);
+    // Draw bottom hook of bracket
+    groupG.append("line")
+      .attr("x1", 15)
+      .attr("x2", 20)
+      .attr("y1", d => d.endY - 2)
+      .attr("y2", d => d.endY - 2)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1.5);
+  }
 
   const iconMap = {
     "AI Models":        "brain",
@@ -1106,23 +1113,25 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     "Consumer":         "tv"
   };
 
-  // Draw label using foreignObject to support Lucide icons!
-  groupG.append("foreignObject")
-    .attr("x", 24)
-    .attr("y", d => (d.startY + d.endY) / 2 - 8)
-    .attr("width", 16)
-    .attr("height", 16)
-    .html(d => `
-      <div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;">
-        <i data-lucide="${d.icon || iconMap[d.sector] || "layout-grid"}" style="width: 13px; height: 13px; stroke-width: 2.2px; color: var(--muted-foreground);" title="${d.label}"></i>
-      </div>
-    `);
+  if (isDesktop) {
+    // Draw label using foreignObject to support Lucide icons!
+    groupG.append("foreignObject")
+      .attr("x", 24)
+      .attr("y", d => (d.startY + d.endY) / 2 - 8)
+      .attr("width", 16)
+      .attr("height", 16)
+      .html(d => `
+        <div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;">
+          <i data-lucide="${d.icon || iconMap[d.sector] || "layout-grid"}" style="width: 13px; height: 13px; stroke-width: 2.2px; color: var(--muted-foreground);" title="${d.label}"></i>
+        </div>
+      `);
+  }
 
   // Sector hover overlay rect and event handlers to highlight entire sector
   groupG.append("rect")
-    .attr("x", 0)
+    .attr("x", isDesktop ? 0 : marginLeft)
     .attr("y", d => d.startY)
-    .attr("width", 45)
+    .attr("width", isDesktop ? 45 : width - marginLeft - marginRight)
     .attr("height", d => d.endY - d.startY)
     .attr("fill", "transparent")
     .style("cursor", d => currentLayoutMode === "sector" && SECTOR_ORDER.includes(d.key) ? "grab" : "pointer");
@@ -1302,22 +1311,24 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
     const colorCls = displayPct >= 0 ? "pos" : "neg";
     const pctSign = displayPct >= 0 ? "+" : "";
 
-    rowSelection.append("foreignObject")
-      .attr("x", 46)
-      .attr("y", Math.max(0, (size - 16) / 2))
-      .attr("width", 116)
-      .attr("height", 16)
-      .html(`
-        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;height:100%;box-sizing:border-box;overflow:hidden;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#e8e8e8;letter-spacing:0.04em;white-space:nowrap;">${rowData.symbol}</span>
-          <div style="display:flex;align-items:center;gap:4px;">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${colorCls === 'pos' ? posColor : negColor};white-space:nowrap;">${pctSign}${displayPct.toFixed(1)}%</span>
-            <button class="row-del-btn" data-sym="${rowData.symbol}" title="Remove" style="background:none;border:none;color:#555;cursor:pointer;padding:1px;display:inline-flex;align-items:center;justify-content:center;">
-              <i data-lucide="x" style="width:10px;height:10px;stroke-width:2.5;"></i>
-            </button>
+    if (isDesktop) {
+      rowSelection.append("foreignObject")
+        .attr("x", 46)
+        .attr("y", Math.max(0, (size - 16) / 2))
+        .attr("width", 116)
+        .attr("height", 16)
+        .html(`
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;height:100%;box-sizing:border-box;overflow:hidden;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#e8e8e8;letter-spacing:0.04em;white-space:nowrap;">${rowData.symbol}</span>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${colorCls === 'pos' ? posColor : negColor};white-space:nowrap;">${pctSign}${displayPct.toFixed(1)}%</span>
+              <button class="row-del-btn" data-sym="${rowData.symbol}" title="Remove" style="background:none;border:none;color:#555;cursor:pointer;padding:1px;display:inline-flex;align-items:center;justify-content:center;">
+                <i data-lucide="x" style="width:10px;height:10px;stroke-width:2.5;"></i>
+              </button>
+            </div>
           </div>
-        </div>
-      `);
+        `);
+    }
 
     rowSelection.append("line")
       .attr("x1", marginLeft).attr("x2", width - marginRight)
@@ -1325,14 +1336,16 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       .attr("stroke", "var(--border)")
       .attr("stroke-width", 1);
 
-    rowSelection.append("rect")
+    const hitRect = rowSelection.append("rect")
       .attr("x", marginLeft)
       .attr("y", 0)
       .attr("width", width - marginLeft - marginRight)
       .attr("height", size)
       .attr("fill", "transparent")
-      .style("cursor", "crosshair")
-      .on("mousemove", function(event) {
+      .style("cursor", enableTooltips ? "crosshair" : "pointer");
+
+    if (enableTooltips) {
+      hitRect.on("mousemove", function(event) {
         const [rawMx] = d3.pointer(event, svgEl);
         const mx = Math.max(marginLeft, Math.min(width - marginRight, rawMx));
         
@@ -1381,6 +1394,7 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         tooltip.style.opacity = "0"; 
         hairline.style("display", "none");
       });
+    }
   });
 
   const axis = s.append("g")
@@ -1437,6 +1451,19 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
       if (lastIndex !== undefined && !tickIndexes.includes(lastIndex)) tickIndexes.push(lastIndex);
     }
 
+    if (!isDesktop) {
+      const maxMobileTicks = currentPeriod === "1d" ? 4 : currentPeriod === "5d" ? 5 : 4;
+      if (tickIndexes.length > maxMobileTicks) {
+        const sampled = [];
+        for (let i = 0; i < maxMobileTicks; i++) {
+          const sourceIndex = Math.round((i * (tickIndexes.length - 1)) / (maxMobileTicks - 1));
+          const tick = tickIndexes[sourceIndex];
+          if (!sampled.includes(tick)) sampled.push(tick);
+        }
+        tickIndexes = sampled;
+      }
+    }
+
     axis
       .call(
         d3.axisTop(xIndex)
@@ -1478,6 +1505,14 @@ function renderChartInto(containerId, fracStart, fracEnd, existingSvg) {
         .remove()
       )
       .call(ax => ax.select(".domain").remove());
+  }
+
+  if (!isDesktop) {
+    axis.selectAll(".tick text").each(function(_, i, nodes) {
+      d3.select(this)
+        .attr("text-anchor", i === 0 ? "start" : i === nodes.length - 1 ? "end" : "middle")
+        .attr("dx", i === 0 ? "0.2em" : i === nodes.length - 1 ? "-0.2em" : "0");
+    });
   }
 
   // Initialize/re-initialize Lucide Icons (e.g. for the foreignObject icons)

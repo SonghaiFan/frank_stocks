@@ -173,12 +173,12 @@
   <header id="header" style="padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; background: var(--surface);">
 
     <!-- Row 1: Brand + icon buttons -->
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-      <div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--foreground);">SPELEOTHEMS</span>
-          <span style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--accent);">CHARTS</span>
-          <span style="font-size: 9px; font-weight: 700; color: var(--muted-foreground); border: 1px solid var(--border-mid); padding: 1px 5px; letter-spacing: 0.12em; margin-left: 2px;">TERMINAL</span>
+    <div class="mobile-topbar" style="display: flex; align-items: center; justify-content: space-between;">
+      <div class="mobile-brand-block">
+        <div class="mobile-brand-row" style="display: flex; align-items: center; gap: 8px;">
+          <span class="mobile-brand-name" style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--foreground);">SPELEOTHEMS</span>
+          <span class="mobile-brand-accent" style="font-size: 16px; font-weight: 800; letter-spacing: 0.06em; color: var(--accent);">CHARTS</span>
+          <span class="mobile-terminal" style="font-size: 9px; font-weight: 700; color: var(--muted-foreground); border: 1px solid var(--border-mid); padding: 1px 5px; letter-spacing: 0.12em; margin-left: 2px;">TERMINAL</span>
           <span id="market-status-badge-mobile" style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:700;letter-spacing:0.1em;padding:1px 6px;border:1px solid var(--border-mid);color:var(--muted-foreground);margin-left:4px;">
             <span id="market-dot-mobile" style="width:5px;height:5px;border-radius:50% !important;background:var(--muted-foreground);display:inline-block;"></span>
             <span class="market-badge-label" id="market-label-mobile">–</span>
@@ -186,7 +186,7 @@
         </div>
         <div class="subtitle" style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-top: 3px;">% RETURN OVERLAY · HORIZON CHART</div>
       </div>
-      <div style="display: flex; gap: 4px; align-items: center;">
+      <div class="mobile-actions" style="display: flex; gap: 4px; align-items: center;">
         <button id="info-toggle-btn-mobile" class="settings-toggle-btn" title="About horizon chart">
           <i data-lucide="info"></i>
         </button>
@@ -198,7 +198,7 @@
 
     <!-- Row 2: Add ticker form -->
     <div style="position: relative;">
-      <form id="add-form-mobile" style="display: flex; gap: 5px; align-items: center;">
+      <form id="add-form-mobile" class="mobile-add-row" style="display: flex; gap: 5px; align-items: center;">
         <input id="add-input-mobile" class="premium-input" placeholder="Ticker symbol (e.g. NVDA)" maxlength="10" autocomplete="off" style="flex: 1;" />
         <select id="add-sector-mobile" class="premium-select" style="width: 140px; flex-shrink: 0;">
           <option value="AI Models">AI Models</option>
@@ -225,7 +225,7 @@
     </div>
 
     <!-- Row 3: Period tabs + benchmark -->
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <div class="mobile-control-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
       <div class="period-tabs" style="overflow-x: auto; -webkit-overflow-scrolling: touch; flex: 1; min-width: 0;">
         <button class="period-tab active" data-period="1d">1D</button>
         <button class="period-tab" data-period="5d">5D</button>

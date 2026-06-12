@@ -52,6 +52,14 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  @media (max-width: 1023px) {
+    body {
+      width: 100vw;
+      max-width: 100vw;
+      overflow-x: hidden;
+    }
+  }
+
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.3; }
@@ -141,6 +149,117 @@
     background-color: var(--background);
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
+  }
+
+  @media (max-width: 1023px) {
+    #main {
+      width: 100vw;
+      max-width: 100vw;
+      border-left: none;
+      border-right: none;
+    }
+
+    #header {
+      padding: 10px 12px 9px !important;
+      gap: 8px !important;
+    }
+
+    .mobile-topbar {
+      align-items: flex-start !important;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .mobile-brand-block {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .mobile-brand-row {
+      gap: 6px !important;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .mobile-brand-name,
+    .mobile-brand-accent {
+      font-size: 13px !important;
+      line-height: 1.05;
+      letter-spacing: 0.04em !important;
+    }
+
+    .mobile-terminal {
+      display: none !important;
+    }
+
+    #market-status-badge-mobile {
+      margin-left: 0 !important;
+      padding: 1px 5px !important;
+      flex-shrink: 0;
+    }
+
+    #header .subtitle {
+      font-size: 9px !important;
+      line-height: 1.2;
+      margin-top: 2px !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mobile-actions {
+      gap: 3px !important;
+      flex-shrink: 0;
+    }
+
+    .mobile-actions .settings-toggle-btn {
+      width: 28px;
+      height: 28px;
+    }
+
+    .mobile-add-row {
+      gap: 4px !important;
+    }
+
+    #add-input-mobile {
+      min-width: 0;
+      height: 28px;
+      font-size: 10px;
+    }
+
+    #add-sector-mobile,
+    #benchmark-select {
+      height: 28px;
+      font-size: 10px;
+    }
+
+    #add-sector-mobile {
+      width: 118px !important;
+    }
+
+    #add-form-mobile .settings-toggle-btn {
+      width: 28px !important;
+      height: 28px !important;
+    }
+
+    .mobile-control-row {
+      gap: 6px !important;
+      flex-wrap: nowrap !important;
+    }
+
+    .period-tab {
+      padding: 3px 7px;
+      font-size: 9px;
+    }
+
+    #benchmark-select {
+      width: 108px !important;
+    }
+
+    #stats-grid {
+      display: none !important;
+    }
   }
 
   /* ── Desktop two-column layout ── */
@@ -377,10 +496,10 @@
   #dashboard-content {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 0;
     z-index: 1;
   }
   @media (min-width: 600px) {
@@ -476,7 +595,7 @@
 
   /* D3 Area styles */
   #chart-area {
-    padding: 24px;
+    padding: 0;
     position: relative;
     min-height: 200px;
     -webkit-user-select: none;
@@ -497,6 +616,17 @@
   #ridgeline {
     display: block;
     width: 100%;
+  }
+
+  @media (max-width: 1023px) {
+    .dashboard-card {
+      border-left: none;
+      border-right: none;
+    }
+
+    #chart-area {
+      min-height: 260px;
+    }
   }
   .x-axis-shared text {
     fill: var(--muted-foreground);
