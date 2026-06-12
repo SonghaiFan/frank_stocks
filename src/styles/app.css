@@ -332,6 +332,12 @@ button {
   color: var(--muted);
 }
 
+.row-price {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
 @media (min-width: 520px) {
   .row {
     grid-template-columns: 54px minmax(0, 1fr) 74px;
@@ -533,4 +539,15 @@ button {
 .error-screen a:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
 }

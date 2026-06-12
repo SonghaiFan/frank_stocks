@@ -8,6 +8,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatedNumber } from '~/components/AnimatedNumber'
 import { HorizonRow } from '~/components/HorizonRow'
 import type { RowPoint, ScaleMode, XDomainMode } from '~/components/HorizonRow'
 
@@ -128,6 +129,15 @@ function fmtDate(date: string, period: Period) {
   if (intraday) return etDay.format(d)
   if (period === '6mo' || period === '1y') return utcDayYear.format(d)
   return utcDay.format(d)
+}
+
+function fmtCompactPct(value: number, digits: number) {
+  const sign = value >= 0 ? '+' : '−'
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M%`
+  if (abs >= 10_000) return `${sign}${(abs / 1000).toFixed(0)}k%`
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(1)}k%`
+  return `${sign}${abs.toFixed(digits)}%`
 }
 
 /** Measures the list width so every row shares one chart width. */
@@ -369,7 +379,7 @@ function Dashboard() {
     domainMode === 'local' && scrubFrac != null ? `${Math.round(scrubFrac * 100)}%` : ''
 
   const fmtPct = useCallback(
-    (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(period === '1d' ? 2 : 1)}%`,
+    (v: number) => fmtCompactPct(v, period === '1d' ? 2 : 1),
     [period],
   )
 
@@ -431,18 +441,20 @@ function Dashboard() {
           <>
             <div className="summary-item">
               <span>{benchmarkActive ? 'Avg excess' : 'Avg'}</span>
-              <strong className={stats.avg >= 0 ? 'pos' : 'neg'}>{fmtPct(stats.avg)}</strong>
+              <strong className={stats.avg >= 0 ? 'pos' : 'neg'}>
+                <AnimatedNumber value={stats.avg} formatter={fmtPct} />
+              </strong>
             </div>
             <div className="summary-item">
               <span>Best</span>
               <strong className="pos">
-                {stats.best.symbol} {fmtPct(stats.best.v)}
+                {stats.best.symbol} <AnimatedNumber value={stats.best.v} formatter={fmtPct} />
               </strong>
             </div>
             <div className="summary-item">
               <span>Worst</span>
               <strong className="neg">
-                {stats.worst.symbol} {fmtPct(stats.worst.v)}
+                {stats.worst.symbol} <AnimatedNumber value={stats.worst.v} formatter={fmtPct} />
               </strong>
             </div>
           </>

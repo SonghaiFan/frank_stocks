@@ -1,5 +1,6 @@
 import { memo, useMemo, useRef } from 'react'
 import { area, curveMonotoneX } from 'd3'
+import { AnimatedNumber } from './AnimatedNumber'
 
 export type RowPoint = {
   /** position on the shared time axis, 0..1 */
@@ -132,6 +133,7 @@ export const HorizonRow = memo(function HorizonRow({
             {paths.map((p, i) => (
               <path
                 key={i}
+                className="horizon-path"
                 d={p.d}
                 fill={p.sign > 0 ? 'var(--pos)' : 'var(--neg)'}
                 fillOpacity={bandOpacity(p.band)}
@@ -160,8 +162,8 @@ export const HorizonRow = memo(function HorizonRow({
         </button>
       ) : shown ? (
         <span className={`row-pct ${shown.v >= 0 ? 'pos' : 'neg'}`}>
-          {fmtPct(shown.v)}
-          {active && <small>{fmtMoney(active.close)}</small>}
+          <AnimatedNumber value={shown.v} formatter={fmtPct} />
+          {active && <AnimatedNumber value={active.close} formatter={fmtMoney} className="row-price" />}
         </span>
       ) : (
         <span className="row-pct">—</span>
